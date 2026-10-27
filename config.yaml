@@ -1,0 +1,26 @@
+# Concourse 配置。敏感值放 .env，不放这里。
+database_url: "sqlite+aiosqlite:///./concourse.db"
+
+# 调度：每个 fetcher 多久跑一次（cron 表达式或秒数）
+schedule:
+  codeforces: "*/10 * * * *"   # 每 10 分钟
+  scholat: "0 */2 * * *"        # 每 2 小时
+
+# 各 fetcher 的实例化参数
+fetchers:
+  codeforces:
+    notify_registered: true
+    notify_unregistered: true
+  scholat:
+    course_ids: ["3017", "3042"]
+    include_submitted: true
+    headless: true
+
+# Agent 白名单：只有这里的 action 会被执行，其余一律拒绝
+agent:
+  allowed_actions:
+    - read_events
+    - summarize
+    - find_conflicts
+    - draft_add_event      # 只产 staging 提案，不直接写 events
+  llm_model: "[REDACTED]"

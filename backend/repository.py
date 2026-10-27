@@ -1,0 +1,183 @@
+"""事件 repository：upsert、查询、暂存区操作。"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import AsyncGenerator
+
+from sqlalchemy import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from backend.db import SessionLocal
+from shared.models import (
+    Event,
+    ScheduleEventCreate,
+    StagedEvent,
+    SubmissionPolicy,
+    compute_content_hash,
+    to_naive_utc,
+)
+
+
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    async with SessionLocal() as session:
+        yield session
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+async def upsert_event(session: AsyncSession, ev: ScheduleEventCreate) -> tuple[Event, bool]:
+    """Upsert 一条事项；返回 (event, changed)。"""
+    content_hash = compute_content_hash(ev)
+    stmt = select(Event).where(Event.platform == ev.platform, Event.source_id == ev.source_id)
+    result = await session.exec(stmt)  # type: ignore[attr-defined]
+    existing: Event | None = result.first()
+
+    now = datetime.now(timezone.utc)
+    if existing is not None:
+        changed = existing.content_hash != content_hash
+        existing.last_seen_at = now
+        if changed:
+            existing.title = ev.title
+            existing.description = ev.description
+            existing.location = ev.location
+            existing.meeting_url = ev.meeting_url
+            existing.start_at = to_naive_utc(ev.start_at)
+            existing.end_at = to_naive_utc(ev.end_at)
+            existing.tz_original = ev.tz_original
+            existing.all_day = ev.all_day
+            existing.status = ev.status
+            existing.submission_policy = ev.submission_policy
+            existing.organizer_name = ev.organizer_name
+            existing.organizer_email = ev.organizer_email
+            existing.attendees = ev.attendees
+            existing.recurrence_rrule = ev.recurrence_rrule
+            existing.content_hash = content_hash
+            existing.raw_payload = ev.raw_payload
+            existing.updated_at = now
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        return existing, changed
+
+    new_event = Event(
+        platform=ev.platform,
+        source_id=ev.source_id,
+        title=ev.title,
+        description=ev.description,
+        location=ev.location,
+        meeting_url=ev.meeting_url,
+        start_at=to_naive_utc(ev.start_at),
+        end_at=to_naive_utc(ev.end_at),
+        tz_original=ev.tz_original,
+        all_day=ev.all_day,
+        status=ev.status,
+        submission_policy=ev.submission_policy,
+        organizer_name=ev.organizer_name,
+        organizer_email=ev.organizer_email,
+        attendees=ev.attendees,
+        recurrence_rrule=ev.recurrence_rrule,
+        content_hash=content_hash,
+        raw_payload=ev.raw_payload,
+        first_seen_at=now,
+        last_seen_at=now,
+        updated_at=now,
+    )
+    session.add(new_event)
+    await session.commit()
+    await session.refresh(new_event)
+    return new_event, True
+
+
+async def list_events(
+    session: AsyncSession,
+    *,
+    platforms: list[str] | None = None,
+    status: str | None = None,
+    end_before: datetime | None = None,
+    end_after: datetime | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[Event]:
+    stmt = select(Event)
+    if platforms:
+        stmt = stmt.where(Event.platform.in_(platforms))
+    if status:
+        stmt = stmt.where(Event.status == status)
+    if end_after:
+        stmt = stmt.where(Event.end_at >= to_naive_utc(end_after))
+    if end_before:
+        stmt = stmt.where(Event.end_at <= to_naive_utc(end_before))
+    stmt = stmt.order_by(Event.end_at.asc().nulls_last()).offset(offset).limit(limit)
+    result = await session.exec(stmt)  # type: ignore[attr-defined]
+    return list(result.all())
+
+
+# ---------------------------------------------------------------------------
+# Staged events (Agent / CLI 暂存区)
+# ---------------------------------------------------------------------------
+async def create_staged(
+    session: AsyncSession,
+    title: str,
+    end_at: datetime | None,
+    *,
+    start_at: datetime | None = None,
+    description: str = "",
+    submission_policy: SubmissionPolicy = SubmissionPolicy.NONE,
+    proposed_by: str = "agent",
+    raw_payload: dict | None = None,
+) -> StagedEvent:
+    import uuid
+    staged = StagedEvent(
+        source_id=str(uuid.uuid4()),
+        title=title,
+        description=description,
+        start_at=to_naive_utc(start_at),
+        end_at=to_naive_utc(end_at),
+        submission_policy=submission_policy,
+        proposed_by=proposed_by,
+        raw_payload=raw_payload or {},
+    )
+    session.add(staged)
+    await session.commit()
+    await session.refresh(staged)
+    return staged
+
+
+async def list_staged(session: AsyncSession) -> list[StagedEvent]:
+    result = await session.exec(select(StagedEvent).order_by(StagedEvent.created_at.asc()))  # type: ignore[attr-defined]
+    return list(result.all())
+
+
+async def accept_staged(session: AsyncSession, staged_id: int) -> Event | None:
+    """暂存条目升级为 events 表中 platform='manual' 的正式事项。"""
+    staged = await session.get(StagedEvent, staged_id)
+    if staged is None:
+        return None
+    ev = ScheduleEventCreate(
+        platform="manual",
+        source_id=staged.source_id,
+        title=staged.title,
+        description=staged.description,
+        start_at=staged.start_at,
+        end_at=staged.end_at,
+        tz_original=staged.tz_original,
+        all_day=staged.all_day,
+        status=staged.status,
+        submission_policy=staged.submission_policy,
+        raw_payload=staged.raw_payload or {},
+    )
+    event, _ = await upsert_event(session, ev)
+    await session.delete(staged)
+    await session.commit()
+    return event
+
+
+async def dismiss_staged(session: AsyncSession, staged_id: int) -> bool:
+    staged = await session.get(StagedEvent, staged_id)
+    if staged is None:
+        return False
+    await session.delete(staged)
+    await session.commit()
+    return True
