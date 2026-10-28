@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clay — Concourse</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #E0E5EC;
+    --text: #3D4A5C;
+    --muted: #8A9BB5;
+    --urgent: #C0392B;
+    --warn: #9C6A00;
+    --done: #B0BECC;
+    --shadow-out: 6px 6px 14px #B8BEC9, -6px -6px 14px #FFFFFF;
+    --shadow-in: inset 4px 4px 10px #B8BEC9, inset -4px -4px 10px #FFFFFF;
+    --shadow-in-sm: inset 2px 2px 6px #C4CACC, inset -2px -2px 6px #FFFFFF;
+    --r: 14px;
+    --r-sm: 8px;
+    --sans: "Inter", system-ui, -apple-system, sans-serif;
+    --mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.55;
+    min-height: 100vh;
+    padding: 40px 24px 80px;
+  }
+
+  .shell { max-width: 820px; margin: 0 auto; }
+
+  /* ── Raised panel ── */
+  .panel {
+    background: var(--bg);
+    border-radius: var(--r);
+    box-shadow: var(--shadow-out);
+    padding: 28px;
+    margin-bottom: 24px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .logo { font-size: 16px; font-weight: 700; letter-spacing: -.3px; color: var(--text); }
+  .clock { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+  /* ── Tab pills ── */
+  .tab-row {
+    display: flex; gap: 8px; margin-bottom: 28px;
+  }
+  .tab {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px; font-weight: 500;
+    color: var(--muted);
+    border: none; cursor: pointer;
+    background: var(--bg);
+    box-shadow: 3px 3px 7px #B8BEC9, -3px -3px 7px #FFFFFF;
+  }
+  .tab.active {
+    color: var(--text);
+    box-shadow: var(--shadow-in-sm);
+  }
+
+  /* ── Stats ── */
+  .stats-row { display: flex; gap: 16px; margin-bottom: 28px; }
+  .stat-tile {
+    flex: 1;
+    background: var(--bg);
+    border-radius: var(--r-sm);
+    box-shadow: var(--shadow-out);
+    padding: 16px 18px;
+  }
+  .stat-num { font-size: 28px; font-weight: 700; line-height: 1; color: var(--text); }
+  .stat-tile.hot .stat-num { color: var(--urgent); }
+  .stat-label { font-size: 11px; color: var(--muted); margin-top: 5px; }
+
+  /* ── Section ── */
+  .section-label {
+    font-size: 11px; font-weight: 600; letter-spacing: .5px;
+    color: var(--muted); margin: 0 0 10px;
+  }
+
+  /* ── Inset list ── */
+  .inset-list {
+    background: var(--bg);
+    border-radius: var(--r-sm);
+    box-shadow: var(--shadow-in);
+    padding: 4px 0;
+    margin-bottom: 24px;
+  }
+
+  .event-row {
+    display: grid;
+    grid-template-columns: 88px 1fr 120px 78px;
+    align-items: center;
+    padding: 10px 18px;
+    border-bottom: 1px solid rgba(180,190,200,.4);
+    transition: background .1s;
+    cursor: default;
+  }
+  .event-row:last-child { border-bottom: none; }
+  .event-row:hover { background: rgba(255,255,255,.3); }
+
+  .ev-platform { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .ev-title { font-size: 13px; }
+  .ev-deadline { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: right; }
+  .ev-badge { text-align: right; }
+
+  .ev-urgent .ev-deadline { color: var(--urgent); font-weight: 600; }
+  .ev-urgent .ev-title { font-weight: 500; color: var(--text); }
+  .ev-warn .ev-deadline { color: var(--warn); }
+  .ev-done .ev-title { color: var(--done); text-decoration: line-through; }
+  .ev-done .ev-deadline { color: var(--done); }
+
+  .badge {
+    display: inline-block; padding: 2px 8px;
+    border-radius: 10px; font-size: 10px; font-family: var(--mono);
+    background: var(--bg);
+    box-shadow: 2px 2px 5px #B8BEC9, -2px -2px 5px #FFFFFF;
+    color: var(--muted);
+  }
+  .badge.once {
+    box-shadow: inset 2px 2px 5px #C4BBBB, inset -1px -1px 4px #FFFFFF;
+    color: var(--urgent);
+  }
+
+  /* ── Staged ── */
+  .staged-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 18px;
+    border-bottom: 1px solid rgba(180,190,200,.4);
+  }
+  .staged-row:last-child { border-bottom: none; }
+  .staged-platform { font-family: var(--mono); font-size: 10px; color: var(--muted); width: 70px; }
+  .staged-deadline { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: auto; }
+  .staged-actions { display: flex; gap: 8px; }
+
+  .btn {
+    padding: 6px 16px;
+    border-radius: 20px; font-size: 12px; font-weight: 500;
+    cursor: pointer; font-family: var(--sans);
+    background: var(--bg); border: none;
+    color: var(--text);
+    box-shadow: 3px 3px 7px #B8BEC9, -3px -3px 7px #FFFFFF;
+    transition: box-shadow .1s;
+  }
+  .btn:active { box-shadow: var(--shadow-in-sm); }
+  .btn-dismiss { color: var(--muted); }
+
+  /* ── Input ── */
+  .input-wrap { margin-top: 4px; }
+  .input-strip { display: flex; gap: 12px; }
+  .input-strip input {
+    flex: 1; padding: 10px 16px;
+    background: var(--bg);
+    border: none; border-radius: var(--r-sm);
+    box-shadow: var(--shadow-in);
+    color: var(--text); font-family: var(--sans); font-size: 13px;
+    outline: none;
+  }
+  .input-strip input::placeholder { color: var(--muted); }
+  .input-strip input:focus {
+    box-shadow: inset 3px 3px 8px #B0B8C2, inset -3px -3px 8px #F0F5FB;
+  }
+  .input-strip button {
+    padding: 10px 22px;
+    background: var(--bg);
+    border: none; border-radius: var(--r-sm);
+    box-shadow: var(--shadow-out);
+    color: var(--text); font-size: 13px; font-weight: 600;
+    cursor: pointer;
+  }
+  .input-strip button:active { box-shadow: var(--shadow-in-sm); }
+  .hint { font-size: 10px; color: var(--muted); margin-top: 8px; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="panel">
+    <div class="header">
+      <span class="logo">Concourse</span>
+      <span class="clock" id="clk"></span>
+    </div>
+
+    <div class="tab-row">
+      <button class="tab active">全部</button>
+      <button class="tab">scholat</button>
+      <button class="tab">pigai</button>
+      <button class="tab">moodle</button>
+      <button class="tab">codeforces</button>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-tile hot"><div class="stat-num">3</div><div class="stat-label">48 小时内截止</div></div>
+      <div class="stat-tile"><div class="stat-num">3</div><div class="stat-label">本周内截止</div></div>
+      <div class="stat-tile"><div class="stat-num">1</div><div class="stat-label">待确认暂存</div></div>
+    </div>
+
+    <div class="section-label">暂存区 — 待确认</div>
+    <div class="inset-list">
+      <div class="staged-row">
+        <span class="staged-platform">manual</span>
+        <span>图论 lecture notes 整理完成</span>
+        <span class="staged-deadline">11-03 23:59</span>
+        <div class="staged-actions">
+          <button class="btn">接受</button>
+          <button class="btn btn-dismiss">驳回</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">紧急 — 48 小时内</div>
+    <div class="inset-list">
+      <div class="event-row ev-urgent">
+        <span class="ev-platform">scholat</span>
+        <span class="ev-title">高级语言程序设计 第三次作业</span>
+        <span class="ev-deadline">10-28 23:59</span>
+        <span class="ev-badge"><span class="badge once">仅一次</span></span>
+      </div>
+      <div class="event-row ev-warn">
+        <span class="ev-platform">pigai</span>
+        <span class="ev-title">大学英语写作 Unit 4 Essay</span>
+        <span class="ev-deadline">10-29 22:00</span>
+        <span class="ev-badge"><span class="badge">无限次</span></span>
+      </div>
+      <div class="event-row ev-warn">
+        <span class="ev-platform">moodle</span>
+        <span class="ev-title">数学分析 习题集 §3</span>
+        <span class="ev-deadline">10-30 08:00</span>
+        <span class="ev-badge"><span class="badge">可补交</span></span>
+      </div>
+    </div>
+
+    <div class="section-label">本周</div>
+    <div class="inset-list">
+      <div class="event-row">
+        <span class="ev-platform">itestcloud</span>
+        <span class="ev-title">大学英语 Unit 5 在线测试</span>
+        <span class="ev-deadline">11-01 23:59</span>
+        <span class="ev-badge"><span class="badge">不可补</span></span>
+      </div>
+      <div class="event-row">
+        <span class="ev-platform">welearn</span>
+        <span class="ev-title">综合英语 Listening Task 6</span>
+        <span class="ev-deadline">11-02 23:59</span>
+        <span class="ev-badge"><span class="badge">可补交</span></span>
+      </div>
+      <div class="event-row">
+        <span class="ev-platform">codeforces</span>
+        <span class="ev-title">Codeforces Round 987 (Div. 2)</span>
+        <span class="ev-deadline">11-02 17:35</span>
+        <span class="ev-badge"><span class="badge">比赛</span></span>
+      </div>
+    </div>
+
+    <div class="section-label">已完成</div>
+    <div class="inset-list">
+      <div class="event-row ev-done">
+        <span class="ev-platform">scholat</span>
+        <span class="ev-title">高级语言程序设计 第二次作业</span>
+        <span class="ev-deadline">10-21 23:59</span>
+        <span class="ev-badge"></span>
+      </div>
+      <div class="event-row ev-done">
+        <span class="ev-platform">pigai</span>
+        <span class="ev-title">大学英语写作 Unit 3 Essay</span>
+        <span class="ev-deadline">10-14 22:00</span>
+        <span class="ev-badge"></span>
+      </div>
+    </div>
+
+    <div class="section-label">添加事项</div>
+    <div class="input-wrap">
+      <div class="input-strip">
+        <input type="text" placeholder="自然语言描述，或 --title &quot;作业&quot; --end 1031+">
+        <button>添加</button>
+      </div>
+      <div class="hint">mmdd+ = 当天 23:59 截止 &nbsp;|&nbsp; mmdd- = 当天 00:00 &nbsp;|&nbsp; 自然语言由 AI 解析</div>
+    </div>
+  </div>
+</div>
+<script>
+  const clk = document.getElementById('clk');
+  function tick() { clk.textContent = new Date().toLocaleString('zh-CN',{hour12:false}); }
+  tick(); setInterval(tick,1000);
+</script>
+</body>
+</html>

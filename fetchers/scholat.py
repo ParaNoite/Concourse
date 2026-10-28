@@ -18,12 +18,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
+from fetchers._browser import launch_context
 from shared import credentials
 
 if TYPE_CHECKING:
@@ -33,7 +33,6 @@ from shared.models import ScheduleEventCreate, SubmissionPolicy
 NAME = "scholat"
 BASE = "https://www.scholat.com"
 LOGIN_URL = f"{BASE}/login.html?source=pc"
-BROWSER_DATA_DIR = Path(__file__).resolve().parent.parent / ".browser-data" / NAME
 
 
 # ---------------------------------------------------------------------------
@@ -203,23 +202,6 @@ def parse_homework_detail(html: str, hw: Homework) -> Homework:
 # ---------------------------------------------------------------------------
 # 浏览器 / 登录
 # ---------------------------------------------------------------------------
-async def _launch_context(pw, headless: bool = True):
-    BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for channel in ("msedge", "chrome", "chromium", None):
-        kwargs = {"channel": channel} if channel else {}
-        try:
-            ctx = await pw.chromium.launch_persistent_context(
-                user_data_dir=str(BROWSER_DATA_DIR),
-                headless=headless,
-                accept_downloads=False,
-                **kwargs,
-            )
-            return ctx
-        except Exception:  # noqa: BLE001
-            continue
-    raise RuntimeError("无法启动浏览器（msedge / chrome / chromium 均失败）")
-
-
 async def _is_logged_in(context: BrowserContext, probe_course_id: str) -> bool:
     try:
         resp = await context.request.get(
@@ -297,7 +279,7 @@ class ScholatFetcher:
         from playwright.async_api import async_playwright
         cred = credentials.load(NAME)
         async with async_playwright() as pw:
-            context = await _launch_context(pw, headless=self.headless)
+            context = await launch_context(pw, NAME, headless=self.headless)
             try:
                 probe_id = self.course_ids[0]
                 await _ensure_logged_in(context, cred, probe_id)

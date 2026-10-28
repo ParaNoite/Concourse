@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Editorial — Concourse</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=Source+Serif+4:wght@400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #FFFFFF;
+    --bg-tint: #FAFAF8;
+    --paper: #F8F6F1;
+    --border: #EAE7DF;
+    --border-strong: #D9D5C9;
+    --text: #1F1E1B;
+    --muted: #8A8678;
+    --accent: #5E6AD2;
+    --accent-soft: #EEF0FC;
+    --urgent: #B23A2E;
+    --warn: #8A6612;
+    --done: #C8C3B6;
+    --sans: "Inter", system-ui, sans-serif;
+    --serif: "Source Serif 4", "Source Serif Pro", "Songti SC", serif;
+    --mono: "SFMono-Regular", "SF Mono", "Consolas", monospace;
+  }
+
+  body {
+    background: var(--bg-tint);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13.5px;
+    line-height: 1.55;
+    min-height: 100vh;
+    font-feature-settings: "ss01", "cv01";
+  }
+
+  /* paper sheet */
+  .sheet {
+    max-width: 720px;
+    margin: 56px auto 80px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 1px 0 var(--border), 0 8px 24px rgba(31,30,27,.04);
+    padding: 48px 56px 56px;
+  }
+
+  /* masthead */
+  .masthead {
+    display: flex; align-items: baseline; justify-content: space-between;
+    border-bottom: 1px solid var(--border-strong);
+    padding-bottom: 20px;
+    margin-bottom: 8px;
+  }
+  .logo {
+    font-family: var(--serif);
+    font-size: 22px; font-weight: 500;
+    letter-spacing: -.4px;
+    color: var(--text);
+  }
+  .logo em { font-style: italic; color: var(--accent); font-weight: 400; }
+  .masthead-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+    line-height: 1.7;
+  }
+
+  /* dateline */
+  .dateline {
+    font-family: var(--serif);
+    font-size: 12px;
+    color: var(--muted);
+    font-style: italic;
+    margin-bottom: 36px;
+  }
+
+  /* headline */
+  .headline {
+    font-family: var(--serif);
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: -.5px;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+  .deck {
+    font-family: var(--serif);
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--muted);
+    margin-bottom: 32px;
+    max-width: 56ch;
+  }
+
+  /* section rule */
+  .section {
+    margin-top: 28px;
+  }
+  .section-head {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 14px;
+  }
+  .section-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: .5px;
+  }
+  .section-title {
+    font-family: var(--serif);
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .section-count {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+  hr.rule {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0 0 14px;
+  }
+
+  /* event entry */
+  .entry {
+    display: grid;
+    grid-template-columns: 28px 96px 1fr 116px 70px;
+    align-items: baseline;
+    padding: 11px 0;
+    border-bottom: 1px dotted var(--border);
+    column-gap: 12px;
+    transition: background .12s;
+  }
+  .entry:last-of-type { border-bottom: 1px solid var(--border); }
+  .entry:hover { background: var(--bg-tint); }
+
+  .entry-marker {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-align: right;
+  }
+  .entry-platform {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .entry-title {
+    font-family: var(--serif);
+    font-size: 14.5px;
+    line-height: 1.35;
+    color: var(--text);
+  }
+  .entry-deadline {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    text-align: right;
+  }
+  .entry-badge { text-align: right; }
+
+  /* urgency */
+  .entry-urgent .entry-marker { color: var(--urgent); font-weight: 600; }
+  .entry-urgent .entry-title { color: var(--text); }
+  .entry-urgent .entry-deadline { color: var(--urgent); font-weight: 500; }
+  .entry-warn .entry-deadline { color: var(--warn); }
+  .entry-done .entry-title {
+    color: var(--done);
+    text-decoration: line-through;
+    text-decoration-color: var(--done);
+  }
+  .entry-done .entry-deadline { color: var(--done); }
+  .entry-done .entry-marker { color: var(--done); }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-family: var(--mono);
+    border: 1px solid var(--border-strong);
+    color: var(--muted);
+    background: var(--bg);
+  }
+  .pill.once { border-color: #E3C0BB; color: var(--urgent); background: #FBF0EE; }
+  .pill.contest { border-color: #C5C9EE; color: var(--accent); background: var(--accent-soft); }
+
+  /* staged callout */
+  .callout {
+    background: var(--accent-soft);
+    border-left: 2px solid var(--accent);
+    padding: 14px 18px;
+    margin: 28px 0;
+    border-radius: 0 4px 4px 0;
+  }
+  .callout-title {
+    font-family: var(--serif);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+    margin-bottom: 8px;
+    font-style: italic;
+  }
+  .staged-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 0;
+    font-size: 13px;
+  }
+  .staged-platform { font-family: var(--mono); font-size: 11px; color: var(--accent); width: 70px; }
+  .staged-deadline { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-left: auto; }
+  .staged-actions { display: flex; gap: 6px; }
+  .btn {
+    padding: 3px 12px; border-radius: 3px; font-size: 11.5px;
+    cursor: pointer; font-family: var(--sans);
+  }
+  .btn-accept {
+    background: var(--accent); color: #fff; border: 1px solid var(--accent);
+  }
+  .btn-accept:hover { background: #4A55B8; }
+  .btn-dismiss {
+    background: transparent; border: 1px solid var(--border-strong); color: var(--muted);
+  }
+  .btn-dismiss:hover { background: var(--bg-tint); }
+
+  /* input */
+  .composer {
+    margin-top: 32px;
+    border-top: 1px solid var(--border-strong);
+    padding-top: 24px;
+  }
+  .composer-label {
+    font-family: var(--serif);
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 10px;
+  }
+  .composer-label em { color: var(--accent); font-style: italic; }
+  .composer-row { display: flex; gap: 8px; }
+  .composer-row input {
+    flex: 1; padding: 9px 13px;
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--text); font-family: var(--serif); font-size: 14px;
+    outline: none;
+  }
+  .composer-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .composer-row button {
+    padding: 9px 20px;
+    background: var(--text); color: #fff; border: none; border-radius: 4px;
+    font-family: var(--sans); font-size: 13px; font-weight: 500;
+    cursor: pointer;
+  }
+  .composer-hint {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  /* folio */
+  .folio {
+    margin-top: 48px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    letter-spacing: .5px;
+  }
+</style>
+</head>
+<body>
+<article class="sheet">
+  <div class="masthead">
+    <div class="logo">Con<em>course</em></div>
+    <div class="masthead-meta">
+      <span id="clk"></span><br>
+      Vol. I · 截止事项周报
+    </div>
+  </div>
+  <div class="dateline">第十周 · 星期一</div>
+
+  <h1 class="headline">本周需办九件，其中三件迫近</h1>
+  <p class="deck">学者网作业一项紧接截止且仅允许一次提交，作文与数学分析随后。其余多在本周末，可从容安排。</p>
+
+  <div class="callout">
+    <div class="callout-title">待确认 — 来自自然语言添加</div>
+    <div class="staged-row">
+      <span class="staged-platform">manual</span>
+      <span>图论 lecture notes 整理完成</span>
+      <span class="staged-deadline">11-03 23:59</span>
+      <div class="staged-actions">
+        <button class="btn btn-accept">接受</button>
+        <button class="btn btn-dismiss">驳回</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-num">§ 01</span>
+      <span class="section-title">紧急 — 四十八小时内</span>
+      <span class="section-count">3 项</span>
+    </div>
+    <hr class="rule">
+    <div class="entry entry-urgent">
+      <span class="entry-marker">⚠</span>
+      <span class="entry-platform">scholat</span>
+      <span class="entry-title">高级语言程序设计 第三次作业</span>
+      <span class="entry-deadline">10-28 23:59</span>
+      <span class="entry-badge"><span class="pill once">仅一次</span></span>
+    </div>
+    <div class="entry entry-warn">
+      <span class="entry-marker">·</span>
+      <span class="entry-platform">pigai</span>
+      <span class="entry-title">大学英语写作 Unit 4 Essay</span>
+      <span class="entry-deadline">10-29 22:00</span>
+      <span class="entry-badge"><span class="pill">无限次</span></span>
+    </div>
+    <div class="entry entry-warn">
+      <span class="entry-marker">·</span>
+      <span class="entry-platform">moodle</span>
+      <span class="entry-title">数学分析 习题集 §3</span>
+      <span class="entry-deadline">10-30 08:00</span>
+      <span class="entry-badge"><span class="pill">可补交</span></span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-num">§ 02</span>
+      <span class="section-title">本周内</span>
+      <span class="section-count">3 项</span>
+    </div>
+    <hr class="rule">
+    <div class="entry">
+      <span class="entry-marker">·</span>
+      <span class="entry-platform">itestcloud</span>
+      <span class="entry-title">大学英语 Unit 5 在线测试</span>
+      <span class="entry-deadline">11-01 23:59</span>
+      <span class="entry-badge"><span class="pill">不可补</span></span>
+    </div>
+    <div class="entry">
+      <span class="entry-marker">·</span>
+      <span class="entry-platform">welearn</span>
+      <span class="entry-title">综合英语 Listening Task 6</span>
+      <span class="entry-deadline">11-02 23:59</span>
+      <span class="entry-badge"><span class="pill">可补交</span></span>
+    </div>
+    <div class="entry">
+      <span class="entry-marker">·</span>
+      <span class="entry-platform">codeforces</span>
+      <span class="entry-title">Codeforces Round 987 (Div. 2)</span>
+      <span class="entry-deadline">11-02 17:35</span>
+      <span class="entry-badge"><span class="pill contest">比赛</span></span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-num">§ 03</span>
+      <span class="section-title">已完成</span>
+      <span class="section-count">2 项</span>
+    </div>
+    <hr class="rule">
+    <div class="entry entry-done">
+      <span class="entry-marker">✓</span>
+      <span class="entry-platform">scholat</span>
+      <span class="entry-title">高级语言程序设计 第二次作业</span>
+      <span class="entry-deadline">10-21 23:59</span>
+      <span class="entry-badge"></span>
+    </div>
+    <div class="entry entry-done">
+      <span class="entry-marker">✓</span>
+      <span class="entry-platform">pigai</span>
+      <span class="entry-title">大学英语写作 Unit 3 Essay</span>
+      <span class="entry-deadline">10-14 22:00</span>
+      <span class="entry-badge"></span>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="composer-label">添加 <em>新事项</em></div>
+    <div class="composer-row">
+      <input type="text" placeholder="自然语言描述，或 --title &quot;作业&quot; --end 1031+">
+      <button>添加</button>
+    </div>
+    <div class="composer-hint">mmdd+ = 当天 23:59 截止 &nbsp;·&nbsp; mmdd- = 当天 00:00 &nbsp;·&nbsp; 自然语言由 AI 解析后进暂存区</div>
+  </div>
+
+  <div class="folio">— Concourse · 多平台截止聚合 · 第 1 卷 —</div>
+</article>
+<script>
+  const clk = document.getElementById('clk');
+  function tick() {
+    clk.textContent = new Date().toLocaleString('zh-CN',{hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).replace(/\//g,'.');
+  }
+  tick(); setInterval(tick,1000);
+</script>
+</body>
+</html>

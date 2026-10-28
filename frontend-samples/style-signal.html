@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal — Concourse</title>
+<style>
+  /* Signal: extreme restraint. One typeface, one accent color (red = urgent only).
+     Layout is a table-like list, not cards. Keyboard-first density. */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #FAFAFA;
+    --surface: #FFFFFF;
+    --border: #E2E2E2;
+    --text: #111111;
+    --muted: #888888;
+    --urgent: #D62929;
+    --warn: #C47900;
+    --done: #AAAAAA;
+    --mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
+    --sans: system-ui, -apple-system, sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ── */
+  .shell {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+
+  /* ── Header ── */
+  .topbar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 36px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+  }
+  .topbar-left { display: flex; align-items: baseline; gap: 20px; }
+  .logo {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -.2px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .platform-tabs { display: flex; gap: 2px; }
+  .tab {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    border: none;
+    background: none;
+  }
+  .tab.active { background: var(--border); color: var(--text); }
+  .clock { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+  /* ── Section heading ── */
+  .section-heading {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: .6px;
+    text-transform: uppercase;
+    margin: 28px 0 8px;
+  }
+
+  /* ── Event rows ── */
+  .event-list { width: 100%; border-collapse: collapse; }
+  .event-list tr { border-bottom: 1px solid var(--border); }
+  .event-list tr:last-child { border-bottom: none; }
+  .event-list td {
+    padding: 10px 8px;
+    vertical-align: middle;
+  }
+  .event-list tr:hover td { background: #F5F5F5; }
+
+  /* columns */
+  .col-platform {
+    width: 90px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .col-title { font-size: 13px; font-weight: 450; }
+  .col-deadline {
+    width: 130px;
+    font-family: var(--mono);
+    font-size: 12px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .col-policy { width: 80px; text-align: right; }
+
+  /* urgency */
+  .urgent .col-deadline { color: var(--urgent); font-weight: 600; }
+  .urgent .col-title { color: var(--text); }
+  .warn .col-deadline { color: var(--warn); }
+  .done .col-title { color: var(--done); text-decoration: line-through; }
+  .done .col-deadline { color: var(--done); }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-family: var(--mono);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .badge.once { border-color: #F4BFBF; color: var(--urgent); }
+
+  /* ── Staged bar ── */
+  .staged-bar {
+    margin-top: 40px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    padding: 16px 20px;
+  }
+  .staged-bar-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .staged-bar-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .staged-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .staged-actions { display: flex; gap: 6px; margin-left: auto; }
+  .btn-accept, .btn-dismiss {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: none;
+  }
+  .btn-accept { border-color: #111; color: #111; }
+  .btn-dismiss { color: var(--muted); }
+
+  /* ── Input strip ── */
+  .input-strip {
+    display: flex;
+    gap: 8px;
+    margin-top: 24px;
+    align-items: center;
+  }
+  .input-strip input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: var(--sans);
+    font-size: 13px;
+    background: var(--surface);
+    color: var(--text);
+    outline: none;
+  }
+  .input-strip input:focus { border-color: #999; }
+  .input-strip button {
+    padding: 8px 16px;
+    background: var(--text);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <div class="topbar-left">
+      <a class="logo" href="#">Concourse</a>
+      <div class="platform-tabs">
+        <button class="tab active">全部</button>
+        <button class="tab">scholat</button>
+        <button class="tab">pigai</button>
+        <button class="tab">moodle</button>
+        <button class="tab">codeforces</button>
+      </div>
+    </div>
+    <span class="clock" id="clk"></span>
+  </div>
+
+  <div class="section-heading">紧急 — 48 小时内</div>
+  <table class="event-list">
+    <tr class="urgent">
+      <td class="col-platform">scholat</td>
+      <td class="col-title">高级语言程序设计 第三次作业</td>
+      <td class="col-deadline">10-28 23:59</td>
+      <td class="col-policy"><span class="badge once">仅一次</span></td>
+    </tr>
+    <tr class="warn">
+      <td class="col-platform">pigai</td>
+      <td class="col-title">大学英语写作 Unit 4 Essay</td>
+      <td class="col-deadline">10-29 22:00</td>
+      <td class="col-policy"><span class="badge">无限次</span></td>
+    </tr>
+    <tr class="warn">
+      <td class="col-platform">moodle</td>
+      <td class="col-title">数学分析 习题集 §3</td>
+      <td class="col-deadline">10-30 08:00</td>
+      <td class="col-policy"><span class="badge">可补交</span></td>
+    </tr>
+  </table>
+
+  <div class="section-heading">本周</div>
+  <table class="event-list">
+    <tr>
+      <td class="col-platform">itestcloud</td>
+      <td class="col-title">大学英语 Unit 5 在线测试</td>
+      <td class="col-deadline">11-01 23:59</td>
+      <td class="col-policy"><span class="badge">不可补</span></td>
+    </tr>
+    <tr>
+      <td class="col-platform">welearn</td>
+      <td class="col-title">综合英语 Listening Task 6</td>
+      <td class="col-deadline">11-02 23:59</td>
+      <td class="col-policy"><span class="badge">可补交</span></td>
+    </tr>
+    <tr>
+      <td class="col-platform">codeforces</td>
+      <td class="col-title">Codeforces Round 987 (Div. 2)</td>
+      <td class="col-deadline">11-02 17:35</td>
+      <td class="col-policy"><span class="badge">比赛</span></td>
+    </tr>
+  </table>
+
+  <div class="section-heading">已完成</div>
+  <table class="event-list">
+    <tr class="done">
+      <td class="col-platform">scholat</td>
+      <td class="col-title">高级语言程序设计 第二次作业</td>
+      <td class="col-deadline">10-21 23:59</td>
+      <td class="col-policy"></td>
+    </tr>
+    <tr class="done">
+      <td class="col-platform">pigai</td>
+      <td class="col-title">大学英语写作 Unit 3 Essay</td>
+      <td class="col-deadline">10-14 22:00</td>
+      <td class="col-policy"></td>
+    </tr>
+  </table>
+
+  <div class="staged-bar">
+    <div class="staged-bar-header">
+      <span class="staged-bar-title">暂存区 — 待确认</span>
+    </div>
+    <div class="staged-row">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted);width:90px">manual</span>
+      <span>图论 lecture notes 整理完成</span>
+      <span style="font-family:var(--mono);font-size:12px;color:var(--muted)">11-03 23:59</span>
+      <div class="staged-actions">
+        <button class="btn-accept">接受</button>
+        <button class="btn-dismiss">驳回</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="input-strip">
+    <input type="text" placeholder="明天下午三点 组会记录整理  或  --title &quot;作业&quot; --end 1031+" id="addInput">
+    <button>添加</button>
+  </div>
+  <div class="hint">mmdd+ = 当天 23:59 截止 &nbsp;|&nbsp; mmdd- = 当天 00:00 &nbsp;|&nbsp; 自然语言由 AI 解析</div>
+</div>
+<script>
+  const clk = document.getElementById('clk');
+  function tick() {
+    const now = new Date();
+    clk.textContent = now.toLocaleString('zh-CN',{hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).replace(/\//g,'-');
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+</body>
+</html>
