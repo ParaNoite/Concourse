@@ -18,6 +18,12 @@ uv run python -m fetchers.scholat --save-credentials
 concourse list                                    # after uv sync + uv pip install -e .
 ```
 
+CLI add flags (since initial scaffold):
+```
+concourse add --title "作业" --end 1028+ --platform scholat --course "Java程序设计"
+```
+`--platform` defaults to `manual`; `--course` defaults to empty.
+
 Frontend (Vue 3 + Vite, not yet scaffolded):
 ```
 npm run dev / npm run build / npm run type-check
@@ -55,6 +61,8 @@ config.yaml        non-secret config (fetcher params, cron, agent whitelist)
 ### Data model
 
 `ScheduleEventCreate` is the fetcher output contract. `Event` is the persisted form (SQLite, naive UTC datetimes). `StagedEvent` holds agent/CLI proposals pending human accept/dismiss. Unique key is `(platform, source_id)`. Upserts compare `content_hash` (sha256 of normalised fields) to detect changes.
+
+`course` is the platform-internal sub-classification (e.g. a course name under scholat: "Java程序设计"). It is indexed and used by the frontend to group within a platform. Fetchers SHOULD set it when the source distinguishes courses; manual/CLI additions default to empty.
 
 All datetimes stored as naive UTC. `to_naive_utc` / `to_aware_utc` helpers in `shared/models.py` handle conversion at boundaries.
 
@@ -96,6 +104,18 @@ Full ISO 8601 strings are also accepted.
 - **SQLite first** — no Docker for local dev. Switch to PostgreSQL: change `DATABASE_URL` to `postgresql+asyncpg://...` and `uv add asyncpg`.
 - **DPAPI single-machine** — intentional for Windows Server home deployment over Tailscale. If porting to Linux, swap to `keyring` library.
 - **Staged buffer for all writes** — agent and CLI never write directly to `events`; every addition goes through `staged_events` → human confirm.
+- **Soft delete + done are orthogonal** — `status='done'` marks an event finished but keeps it in the main list (with a strike-through). `deleted_at` (non-null) moves it to the trash, invisible to `list_events` by default. Done and deleted are independent: a done event can be trashed, a trashed event can be restored to its pre-delete `status` without remembering prior state. Permanent deletion (hard `DELETE`) only applies to already-soft-deleted rows.
+
+### Frontend tab layout
+
+The Dashboard groups events by platform, with one card per platform. Within each card, events sort by urgency (urgent → warn → normal → done) then by deadline. The platform tabs at the top filter to a single platform or show all, with a "隐藏已完成" checkbox to hide `done` events. The `course` field appears in the left column of each row (the sub-classification within the platform, e.g. a course name); this replaces the raw `platform` column since the platform is already the card header.
+
+Codeforces events have `course = ""` (contests are a flat list). Scholat events carry the `course_id` as `course` until fetcher-side course-name resolution is added.
+
+### Event lifecycle
+
+`status`: `open` (default) → `done` via `POST /events/{id}/done` / `concourse done <id>`.
+`deleted_at`: `null` → soft-deleted via `DELETE /events/{id}` / `concourse delete <id>` → visible only in `GET /trash` / `concourse trash`. Restored via `POST /events/{id}/restore` / `concourse restore <id>`. Permanently removed via `DELETE /events/{id}/permanent` / `concourse delete <id> --permanent` (only on soft-deleted rows).
 
 ## Environment variables
 

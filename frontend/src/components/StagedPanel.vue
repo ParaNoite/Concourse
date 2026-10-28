@@ -4,8 +4,8 @@ const store = useEventsStore()
 
 function fmt(iso: string | null): string {
   if (!iso) return '—'
-  const d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
-  return d.toLocaleString('zh-CN', {
+  const ms = Date.parse(iso.endsWith('Z') || /[+-]\d\d:\d\d$/.test(iso) ? iso : iso + 'Z')
+  return new Date(ms).toLocaleString('zh-CN', {
     month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false,
   })

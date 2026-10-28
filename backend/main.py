@@ -15,10 +15,15 @@ from backend.db import init_db
 from backend.repository import (
     accept_staged,
     create_staged,
+    delete_event,
     dismiss_staged,
     get_session,
     list_events,
     list_staged,
+    list_trash,
+    mark_done,
+    permanent_delete_event,
+    restore_event,
 )
 from shared.config import secrets
 from shared.models import Event, StagedEvent, SubmissionPolicy
@@ -80,6 +85,41 @@ async def get_events(
         limit=limit,
         offset=offset,
     )
+
+
+@app.delete("/events/{event_id}", status_code=204)
+async def delete_event_route(event_id: int, session: Session):
+    ok = await delete_event(session, event_id)
+    if not ok:
+        raise HTTPException(404, "Event not found")
+
+
+@app.post("/events/{event_id}/done", response_model=Event)
+async def mark_event_done(event_id: int, session: Session):
+    event = await mark_done(session, event_id)
+    if event is None:
+        raise HTTPException(404, "Event not found or already deleted")
+    return event
+
+
+@app.post("/events/{event_id}/restore", response_model=Event)
+async def restore_event_route(event_id: int, session: Session):
+    event = await restore_event(session, event_id)
+    if event is None:
+        raise HTTPException(404, "Event not found or not in trash")
+    return event
+
+
+@app.delete("/events/{event_id}/permanent", status_code=204)
+async def permanent_delete_route(event_id: int, session: Session):
+    ok = await permanent_delete_event(session, event_id)
+    if not ok:
+        raise HTTPException(404, "Event not found in trash")
+
+
+@app.get("/trash", response_model=list[Event])
+async def get_trash(session: Session, limit: int = 200):
+    return await list_trash(session, limit=limit)
 
 
 # ---------------------------------------------------------------------------

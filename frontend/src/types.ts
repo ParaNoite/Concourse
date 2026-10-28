@@ -2,6 +2,7 @@ export interface ScheduleEvent {
   id: number
   platform: string
   source_id: string
+  course: string
   title: string
   description: string
   location: string
@@ -21,12 +22,14 @@ export interface ScheduleEvent {
   first_seen_at: string
   last_seen_at: string
   updated_at: string
+  deleted_at: string | null
 }
 
 export interface StagedEvent {
   id: number
   platform: string
   source_id: string
+  course: string
   title: string
   description: string
   start_at: string | null

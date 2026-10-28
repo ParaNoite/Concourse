@@ -8,6 +8,11 @@
   concourse staged                      查看暂存区
   concourse accept 3                    接受暂存 ID=3
   concourse dismiss 3                   驳回暂存 ID=3
+  concourse done 12                     标记事项 ID=12 已完成
+  concourse delete 12                   移入回收站 ID=12（可恢复）
+  concourse delete 12 --permanent       永久删除（仅限回收站内条目）
+  concourse restore 12                  从回收站恢复 ID=12
+  concourse trash                       查看回收站
   concourse fetch scholat               手动触发 fetcher
   concourse creds set scholat           交互式保存凭据
   concourse creds forget scholat        删除凭据
@@ -145,6 +150,8 @@ async def _cmd_add(args: argparse.Namespace) -> None:
             title=args.title,
             end_at=end_at,
             start_at=start_at,
+            platform=args.platform or "manual",
+            course=args.course or "",
             description=args.description or "",
             proposed_by="cli",
         )
@@ -203,6 +210,63 @@ async def _add_via_llm(message: str) -> None:
     print(f"已加入暂存区 [{staged.id}]")
 
 
+async def _cmd_delete(args: argparse.Namespace) -> None:
+    from backend.db import init_db, SessionLocal
+    from backend.repository import delete_event, permanent_delete_event
+
+    await init_db()
+    async with SessionLocal() as session:
+        if args.permanent:
+            ok = await permanent_delete_event(session, args.id)
+            action = "已永久删除" if ok else f"未在回收站中找到 ID={args.id}"
+        else:
+            ok = await delete_event(session, args.id)
+            action = f"已移入回收站 events[{args.id}]" if ok else f"未找到 ID={args.id}"
+    print(action)
+
+
+async def _cmd_done(args: argparse.Namespace) -> None:
+    from backend.db import init_db, SessionLocal
+    from backend.repository import mark_done
+
+    await init_db()
+    async with SessionLocal() as session:
+        event = await mark_done(session, args.id)
+    if event is None:
+        print(f"未找到 ID={args.id}（或已在回收站中）")
+        sys.exit(1)
+    print(f"已标记完成 events[{event.id}]: {event.title}")
+
+
+async def _cmd_restore(args: argparse.Namespace) -> None:
+    from backend.db import init_db, SessionLocal
+    from backend.repository import restore_event
+
+    await init_db()
+    async with SessionLocal() as session:
+        event = await restore_event(session, args.id)
+    if event is None:
+        print(f"未在回收站中找到 ID={args.id}")
+        sys.exit(1)
+    print(f"已恢复 events[{event.id}]: {event.title}")
+
+
+async def _cmd_trash(args: argparse.Namespace) -> None:
+    from backend.db import init_db, SessionLocal
+    from backend.repository import list_trash
+
+    await init_db()
+    async with SessionLocal() as session:
+        items = await list_trash(session)
+    if not items:
+        print("（回收站为空）")
+        return
+    for e in items:
+        end = e.end_at.isoformat()[:16] if e.end_at else "     -     "
+        deleted = e.deleted_at.isoformat()[:16] if e.deleted_at else ""
+        print(f"[{e.id:>4}] {e.platform:<12} {end}  删除于 {deleted}  {e.title}")
+
+
 async def _cmd_fetch(args: argparse.Namespace) -> None:
     from backend.scheduler import run_fetcher
     await run_fetcher(args.platform)
@@ -238,11 +302,19 @@ def build_parser() -> argparse.ArgumentParser:
     # staged
     sub.add_parser("staged", help="查看暂存区")
 
-    # accept / dismiss
+    # accept / dismiss / delete
     acc = sub.add_parser("accept", help="接受暂存事项")
     acc.add_argument("id", type=int)
     dis = sub.add_parser("dismiss", help="驳回暂存事项")
     dis.add_argument("id", type=int)
+    dl = sub.add_parser("delete", help="移入回收站（软删除）；加 --permanent 永久删除")
+    dl.add_argument("id", type=int)
+    dl.add_argument("--permanent", action="store_true", help="硬删除，仅对回收站内条目生效")
+    dn = sub.add_parser("done", help="标记事项完成（status=done）")
+    dn.add_argument("id", type=int)
+    rs = sub.add_parser("restore", help="从回收站恢复事项")
+    rs.add_argument("id", type=int)
+    sub.add_parser("trash", help="查看回收站")
 
     # add
     add = sub.add_parser("add", help="添加事项（进暂存区）")
@@ -250,6 +322,8 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--title", "-t")
     add.add_argument("--end", "-e", help="截止时间，支持 mmdd+ / mmdd- / ISO 8601")
     add.add_argument("--start")
+    add.add_argument("--platform", "-p", default="manual", help="平台，如 scholat / codeforces（默认 manual）")
+    add.add_argument("--course", "-c", default="", help="课程/子分类，如 'Java程序设计'")
     add.add_argument("--description", "-d", default="")
 
     # fetch
@@ -274,6 +348,10 @@ def main() -> None:
         "staged": _cmd_staged,
         "accept": _cmd_accept,
         "dismiss": _cmd_dismiss,
+        "delete": _cmd_delete,
+        "done": _cmd_done,
+        "restore": _cmd_restore,
+        "trash": _cmd_trash,
         "add": _cmd_add,
         "fetch": _cmd_fetch,
         "creds": _cmd_creds,

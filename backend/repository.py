@@ -43,6 +43,7 @@ async def upsert_event(session: AsyncSession, ev: ScheduleEventCreate) -> tuple[
             existing.description = ev.description
             existing.location = ev.location
             existing.meeting_url = ev.meeting_url
+            existing.course = ev.course
             existing.start_at = to_aware_utc(ev.start_at)
             existing.end_at = to_aware_utc(ev.end_at)
             existing.tz_original = ev.tz_original
@@ -64,6 +65,7 @@ async def upsert_event(session: AsyncSession, ev: ScheduleEventCreate) -> tuple[
     new_event = Event(
         platform=ev.platform,
         source_id=ev.source_id,
+        course=ev.course,
         title=ev.title,
         description=ev.description,
         location=ev.location,
@@ -97,10 +99,13 @@ async def list_events(
     status: str | None = None,
     end_before: datetime | None = None,
     end_after: datetime | None = None,
+    include_deleted: bool = False,
     limit: int = 200,
     offset: int = 0,
 ) -> list[Event]:
     stmt = select(Event)
+    if not include_deleted:
+        stmt = stmt.where(Event.deleted_at.is_(None))
     if platforms:
         stmt = stmt.where(Event.platform.in_(platforms))
     if status:
@@ -122,6 +127,8 @@ async def create_staged(
     title: str,
     end_at: datetime | None,
     *,
+    platform: str = "manual",
+    course: str = "",
     start_at: datetime | None = None,
     description: str = "",
     submission_policy: SubmissionPolicy = SubmissionPolicy.NONE,
@@ -130,7 +137,9 @@ async def create_staged(
 ) -> StagedEvent:
     import uuid
     staged = StagedEvent(
+        platform=platform,
         source_id=str(uuid.uuid4()),
+        course=course,
         title=title,
         description=description,
         start_at=to_aware_utc(start_at),
@@ -145,19 +154,81 @@ async def create_staged(
     return staged
 
 
+async def delete_event(session: AsyncSession, event_id: int) -> bool:
+    """软删除：设置 deleted_at，保留记录，可通过 restore_event 恢复。"""
+    event = await session.get(Event, event_id)
+    if event is None:
+        return False
+    event.deleted_at = datetime.now(timezone.utc)
+    session.add(event)
+    await session.commit()
+    return True
+
+
+async def restore_event(session: AsyncSession, event_id: int) -> Event | None:
+    """从回收站恢复：清除 deleted_at。"""
+    event = await session.get(Event, event_id)
+    if event is None or event.deleted_at is None:
+        return None
+    event.deleted_at = None
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
+async def permanent_delete_event(session: AsyncSession, event_id: int) -> bool:
+    """硬删除：仅用于回收站内已软删除的条目。"""
+    event = await session.get(Event, event_id)
+    if event is None or event.deleted_at is None:
+        return False
+    await session.delete(event)
+    await session.commit()
+    return True
+
+
+async def mark_done(session: AsyncSession, event_id: int) -> Event | None:
+    """将事项状态标记为 done（已完成），不移入回收站。"""
+    event = await session.get(Event, event_id)
+    if event is None or event.deleted_at is not None:
+        return None
+    event.status = "done"
+    event.updated_at = datetime.now(timezone.utc)
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
+async def list_trash(
+    session: AsyncSession,
+    limit: int = 200,
+) -> list[Event]:
+    """返回回收站中的事项（deleted_at IS NOT NULL），按删除时间倒序。"""
+    stmt = (
+        select(Event)
+        .where(Event.deleted_at.is_not(None))
+        .order_by(Event.deleted_at.desc())
+        .limit(limit)
+    )
+    result = await session.exec(stmt)  # type: ignore[attr-defined]
+    return list(result.scalars().all())
+
+
 async def list_staged(session: AsyncSession) -> list[StagedEvent]:
     result = await session.exec(select(StagedEvent).order_by(StagedEvent.created_at.asc()))  # type: ignore[attr-defined]
-    return list(result.all())
+    return list(result.scalars().all())
 
 
 async def accept_staged(session: AsyncSession, staged_id: int) -> Event | None:
-    """暂存条目升级为 events 表中 platform='manual' 的正式事项。"""
+    """暂存条目升级为正式事项，保留原 platform 和 course。"""
     staged = await session.get(StagedEvent, staged_id)
     if staged is None:
         return None
     ev = ScheduleEventCreate(
-        platform="manual",
+        platform=staged.platform,
         source_id=staged.source_id,
+        course=getattr(staged, 'course', ''),
         title=staged.title,
         description=staged.description,
         start_at=staged.start_at,

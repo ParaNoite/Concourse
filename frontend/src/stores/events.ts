@@ -7,26 +7,37 @@ const BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 export const useEventsStore = defineStore('events', () => {
   const events = ref<ScheduleEvent[]>([])
   const staged = ref<StagedEvent[]>([])
+  const trash = ref<ScheduleEvent[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
   const activePlatform = ref<string>('all')
-
+  const hideDone = ref(false)
   const platforms = computed(() => {
     const ps = new Set(events.value.map(e => e.platform))
     return ['all', ...Array.from(ps).sort()]
   })
 
   const filteredEvents = computed(() => {
-    if (activePlatform.value === 'all') return events.value
-    return events.value.filter(e => e.platform === activePlatform.value)
+    let base = activePlatform.value === 'all'
+      ? events.value
+      : events.value.filter(e => e.platform === activePlatform.value)
+    if (hideDone.value) base = base.filter(e => urgencyOf(e) !== 'done')
+    return base
   })
 
   const now = ref(new Date())
 
+  // Backend returns offsets like "+00:00"; appending "Z" to those yields
+  // invalid ISO strings, so only append when no zone is present.
+  function parseMs(iso: string | null): number {
+    if (!iso) return NaN
+    return Date.parse(iso.endsWith('Z') || /[+-]\d\d:\d\d$/.test(iso) ? iso : iso + 'Z')
+  }
+
   function urgencyOf(e: ScheduleEvent): 'urgent' | 'warn' | 'normal' | 'done' {
     if (e.status === 'submitted' || e.status === 'done') return 'done'
     if (!e.end_at) return 'normal'
-    const ms = new Date(e.end_at + 'Z').getTime() - now.value.getTime()
+    const ms = parseMs(e.end_at) - now.value.getTime()
     if (ms < 0) return 'done'
     if (ms <= 48 * 3600 * 1000) return 'urgent'
     if (ms <= 7 * 24 * 3600 * 1000) return 'warn'
@@ -63,6 +74,8 @@ export const useEventsStore = defineStore('events', () => {
     } finally {
       loading.value = false
     }
+    // Trash is best-effort — a failure here doesn't break the main view.
+    fetchTrash().catch(() => {})
   }
 
   async function acceptStaged(id: number) {
@@ -71,6 +84,40 @@ export const useEventsStore = defineStore('events', () => {
     const newEvent: ScheduleEvent = await res.json()
     events.value.push(newEvent)
     staged.value = staged.value.filter(s => s.id !== id)
+  }
+
+  async function deleteEvent(id: number) {
+    const res = await fetch(`${BASE}/events/${id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`Delete failed: ${res.status}`)
+    events.value = events.value.filter(e => e.id !== id)
+  }
+
+  async function markDone(id: number) {
+    const res = await fetch(`${BASE}/events/${id}/done`, { method: 'POST' })
+    if (!res.ok) throw new Error(`Mark done failed: ${res.status}`)
+    const updated: ScheduleEvent = await res.json()
+    const idx = events.value.findIndex(e => e.id === id)
+    if (idx !== -1) events.value[idx] = updated
+  }
+
+  async function restoreEvent(id: number) {
+    const res = await fetch(`${BASE}/events/${id}/restore`, { method: 'POST' })
+    if (!res.ok) throw new Error(`Restore failed: ${res.status}`)
+    const restored: ScheduleEvent = await res.json()
+    trash.value = trash.value.filter(e => e.id !== id)
+    events.value.push(restored)
+  }
+
+  async function permanentDelete(id: number) {
+    const res = await fetch(`${BASE}/events/${id}/permanent`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`Permanent delete failed: ${res.status}`)
+    trash.value = trash.value.filter(e => e.id !== id)
+  }
+
+  async function fetchTrash() {
+    const res = await fetch(`${BASE}/trash`)
+    if (!res.ok) throw new Error(`Fetch trash failed: ${res.status}`)
+    trash.value = await res.json()
   }
 
   async function dismissStaged(id: number) {
@@ -101,11 +148,12 @@ export const useEventsStore = defineStore('events', () => {
   }
 
   return {
-    events, staged, loading, error,
-    activePlatform, platforms,
+    events, staged, trash, loading, error,
+    activePlatform, platforms, hideDone,
     filteredEvents, urgentEvents, warnEvents, normalEvents, doneEvents,
     urgencyOf, now,
     fetchEvents, acceptStaged, dismissStaged,
+    deleteEvent, markDone, restoreEvent, permanentDelete, fetchTrash,
     startTick, stopTick, startPoll, stopPoll,
   }
 })

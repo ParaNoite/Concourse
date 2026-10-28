@@ -18,6 +18,7 @@ onMounted(() => { tick(); setInterval(tick, 1000) })
     <nav class="tabs">
       <button class="tab" :class="{ active: route.path === '/dashboard' }" @click="router.push('/dashboard')">仪表板</button>
       <button class="tab" :class="{ active: route.path === '/timeline' }" @click="router.push('/timeline')">时间轴</button>
+      <button class="tab trash-tab" :class="{ active: route.path === '/trash' }" @click="router.push('/trash')">回收站</button>
     </nav>
     <span class="clock">{{ clock }}</span>
   </div>

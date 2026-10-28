@@ -46,6 +46,13 @@ const PLATFORM_COLORS: Record<string, string> = {
 function platformColor(p: string): string { return PLATFORM_COLORS[p] ?? '#767676' }
 
 // ── Pixel position helpers ────────────────────────────────────────────────────
+// Backend returns offsets like "+00:00"; appending "Z" to those yields invalid
+// ISO strings, so only append when no zone is present.
+function parseMs(iso: string | null): number {
+  if (!iso) return NaN
+  return Date.parse(iso.endsWith('Z') || /[+-]\d\d:\d\d$/.test(iso) ? iso : iso + 'Z')
+}
+
 function toPx(ms: number): number {
   return ((ms - windowStart.value) / TOTAL_MS) * TOTAL_PX.value
 }
@@ -53,14 +60,14 @@ const nowPx = computed(() => toPx(now.value))
 
 function eventPx(e: ScheduleEvent): number {
   if (!e.end_at) return 0
-  return toPx(Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z')))
+  return toPx(parseMs(e.end_at))
 }
 
 // ── Urgency ───────────────────────────────────────────────────────────────────
 function urgency(e: ScheduleEvent): 'urgent' | 'warn' | 'done' | 'normal' {
   if (e.status === 'submitted') return 'done'
   if (!e.end_at) return 'normal'
-  const diff = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z')) - now.value
+  const diff = parseMs(e.end_at) - now.value
   if (diff <= 0) return 'done'
   if (diff <= 48 * 3_600_000) return 'urgent'
   if (diff <= 7 * 24 * 3_600_000) return 'warn'
@@ -70,7 +77,7 @@ function urgency(e: ScheduleEvent): 'urgent' | 'warn' | 'done' | 'normal' {
 // ── Countdown ────────────────────────────────────────────────────────────────
 function countdown(e: ScheduleEvent): string {
   if (!e.end_at) return '—'
-  const diff = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z')) - now.value
+  const diff = parseMs(e.end_at) - now.value
   if (diff <= 0) {
     const o = -diff
     if (o < 3_600_000) return `已过 ${Math.floor(o / 60_000)} 分`
@@ -85,18 +92,24 @@ function countdown(e: ScheduleEvent): string {
 }
 
 // ── Axis ticks (pixel-based) ──────────────────────────────────────────────────
+// Use LOCAL midnight, not UTC midnight — tick labels are rendered in local time
+// (toLocaleDateString) so the anchor must also be local midnight to keep them aligned.
 interface Tick { label: string; px: number; major: boolean }
 const ticks = computed<Tick[]>(() => {
   const result: Tick[] = []
   const d = new Date(windowStart.value)
-  d.setUTCHours(0, 0, 0, 0)
-  d.setUTCDate(d.getUTCDate() + 1)
+  d.setHours(0, 0, 0, 0)           // local midnight, not UTC
+  d.setDate(d.getDate() + 1)
   while (d.getTime() <= windowEnd.value) {
-    result.push({ label: d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' }), px: toPx(d.getTime()), major: true })
-    const noon = new Date(d); noon.setUTCHours(12)
+    result.push({
+      label: d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' }),
+      px: toPx(d.getTime()),
+      major: true,
+    })
+    const noon = new Date(d); noon.setHours(12)
     if (noon.getTime() <= windowEnd.value)
       result.push({ label: '12:00', px: toPx(noon.getTime()), major: false })
-    d.setUTCDate(d.getUTCDate() + 1)
+    d.setDate(d.getDate() + 1)
   }
   return result
 })
@@ -105,7 +118,7 @@ const ticks = computed<Tick[]>(() => {
 const visibleEvents = computed(() =>
   store.events.filter(e => {
     if (!e.end_at) return false
-    const ms = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
+    const ms = parseMs(e.end_at)
     return ms >= windowStart.value && ms <= windowEnd.value
   })
 )
@@ -118,7 +131,7 @@ const lanes = computed<Lane[]>(() => {
     map.get(e.platform)!.push(e)
   }
   for (const arr of map.values())
-    arr.sort((a, b) => Date.parse((a.end_at ?? '') + 'Z') - Date.parse((b.end_at ?? '') + 'Z'))
+    arr.sort((a, b) => parseMs(a.end_at) - parseMs(b.end_at))
   return Array.from(map.entries()).map(([platform, events]) => ({ platform, events }))
 })
 
@@ -148,8 +161,8 @@ const selected = ref<ScheduleEvent | null>(null)
 function select(e: ScheduleEvent) { selected.value = selected.value?.id === e.id ? null : e }
 function fmtFull(iso: string | null): string {
   if (!iso) return '—'
-  return new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
-    .toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
+  const ms = parseMs(iso)
+  return new Date(ms).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
 }
 </script>
 
@@ -201,14 +214,14 @@ function fmtFull(iso: string | null): string {
               {{ displayName(lane.platform) }}
             </div>
             <div class="track-cell" :style="{ width: TOTAL_PX + 'px', position: 'relative' }">
-              <!-- bar fills -->
+              <!-- bar fills: horizontal line from now to deadline, vertically centred on the node -->
               <template v-for="(e, idx) in lane.events" :key="'bar-' + e.id">
                 <div class="bar-fill"
                   :style="{
                     background: platformColor(e.platform),
                     left: Math.max(0, nowPx) + 'px',
                     width: Math.max(0, eventPx(e) - Math.max(0, nowPx)) + 'px',
-                    top: (8 + rowAssignments(lane.events)[idx] * 48) + 'px',
+                    top: (38 + rowAssignments(lane.events)[idx] * 48) + 'px',
                   }">
                 </div>
               </template>

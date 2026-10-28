@@ -24,6 +24,7 @@ class ScheduleEventCreate(BaseModel):
 
     platform: str
     source_id: str
+    course: str = ""   # 平台内子分类，如 "Java程序设计"
     title: str
     description: str = ""
     location: str = ""
@@ -71,10 +72,13 @@ class Event(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc), index=True
     )
     updated_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+    # course and deleted_at were added via ALTER TABLE — must stay at end to match DB column order
+    course: str = SQLField(default="", index=True)
+    deleted_at: datetime | None = SQLField(default=None, index=True)
 
 
 class StagedEvent(SQLModel, table=True):
-    """Agent / CLI 产出的待确认条目。accept 后变成 platform='manual' 的 Event。"""
+    """Agent / CLI 产出的待确认条目。accept 后变成对应 platform 的正式事项。"""
 
     __tablename__ = "staged_events"
 
@@ -92,12 +96,15 @@ class StagedEvent(SQLModel, table=True):
     proposed_by: str = SQLField(default="agent")  # agent | cli
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
     raw_payload: dict | None = SQLField(default=None, sa_column=Column(JSON))
+    # course is appended via ALTER TABLE — must stay last to match DB column order
+    course: str = SQLField(default="", index=True)
 
 
 def compute_content_hash(ev: ScheduleEventCreate) -> str:
     payload = {
         "platform": ev.platform,
         "source_id": ev.source_id,
+        "course": ev.course,
         "title": ev.title,
         "description": ev.description,
         "location": ev.location,

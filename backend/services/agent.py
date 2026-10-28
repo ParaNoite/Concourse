@@ -49,6 +49,8 @@ _TOOLS = [
                 "end_at": {"type": "string", "description": "ISO 8601 UTC"},
                 "start_at": {"type": "string", "description": "ISO 8601 UTC，可选"},
                 "description": {"type": "string"},
+                "platform": {"type": "string", "description": "平台标识，如 scholat / codeforces / manual"},
+                "course": {"type": "string", "description": "平台内课程/子分类，如 'Java程序设计'"},
             },
         },
     },
@@ -145,6 +147,8 @@ async def _dispatch(
             title=args["title"],
             end_at=end_at,
             start_at=start_at,
+            platform=args.get("platform", "manual"),
+            course=args.get("course", ""),
             description=args.get("description", ""),
             proposed_by="agent",
         )

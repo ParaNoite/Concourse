@@ -20,28 +20,37 @@ const PLATFORM_DISPLAY: Record<string, string> = {
 function platformColor(p: string): string { return PLATFORM_COLORS[p] ?? '#767676' }
 function displayName(p: string): string { return PLATFORM_DISPLAY[p] ?? p }
 
-// Group filtered events by platform, sorted by earliest deadline within each group
+// Group filtered events by platform, sorted by urgency then deadline within each group
 const platformGroups = computed(() => {
   const map = new Map<string, typeof store.filteredEvents>()
   for (const e of store.filteredEvents) {
     if (!map.has(e.platform)) map.set(e.platform, [])
     map.get(e.platform)!.push(e)
   }
-  // sort within each platform by end_at
+
+  // Sort within each platform: urgent → warn → normal → done, then by end_at
+  const urgencyOrder = { urgent: 0, warn: 1, normal: 2, done: 3 }
   for (const arr of map.values()) {
     arr.sort((a, b) => {
+      const ua = urgencyOrder[store.urgencyOf(a)]
+      const ub = urgencyOrder[store.urgencyOf(b)]
+      if (ua !== ub) return ua - ub
       if (!a.end_at) return 1
       if (!b.end_at) return -1
-      return Date.parse(a.end_at + 'Z') - Date.parse(b.end_at + 'Z')
+      return Date.parse(a.end_at) - Date.parse(b.end_at)
     })
   }
-  // sort platforms by their earliest deadline
+
+  // Sort platforms by their most urgent event's deadline
   return Array.from(map.entries())
     .sort((a, b) => {
+      const urgA = urgencyOrder[store.urgencyOf(a[1][0])]
+      const urgB = urgencyOrder[store.urgencyOf(b[1][0])]
+      if (urgA !== urgB) return urgA - urgB
       const ea = a[1][0]?.end_at
       const eb = b[1][0]?.end_at
       if (!ea) return 1; if (!eb) return -1
-      return Date.parse(ea + 'Z') - Date.parse(eb + 'Z')
+      return Date.parse(ea) - Date.parse(eb)
     })
     .map(([platform, events]) => ({ platform, events }))
 })
@@ -72,7 +81,7 @@ async function addEvent() {
 
 <template>
   <div class="dashboard">
-    <!-- platform filter tabs -->
+    <!-- platform filter tabs + hide-done toggle -->
     <div class="platform-bar">
       <button
         v-for="p in store.platforms"
@@ -81,6 +90,10 @@ async function addEvent() {
         :class="{ active: store.activePlatform === p }"
         @click="store.activePlatform = p"
       >{{ p === 'all' ? '全部' : displayName(p) }}</button>
+      <label class="hide-done-toggle">
+        <input type="checkbox" v-model="store.hideDone" />
+        隐藏已完成
+      </label>
     </div>
 
     <!-- stat tiles -->
@@ -109,6 +122,20 @@ async function addEvent() {
 
     <!-- staged -->
     <StagedPanel />
+
+    <!-- urgent/warn spotlight — only shown in "全部" view -->
+    <div v-if="store.activePlatform === 'all' && (store.urgentEvents.length || store.warnEvents.length)" class="spotlight-card">
+      <div class="card-header">
+        <span class="card-title spotlight-title">急事速览</span>
+        <span class="card-count">{{ store.urgentEvents.length + store.warnEvents.length }}</span>
+      </div>
+      <EventRow
+        v-for="e in [...store.urgentEvents, ...store.warnEvents]"
+        :key="'sp-' + e.id"
+        :event="e"
+        :urgency="store.urgencyOf(e)"
+      />
+    </div>
 
     <!-- per-platform cards -->
     <div v-for="group in platformGroups" :key="group.platform" class="card">
@@ -147,13 +174,20 @@ async function addEvent() {
 <style scoped>
 .dashboard { max-width: 900px; margin: 0 auto; padding: 24px 20px 60px; }
 
-.platform-bar { display: flex; gap: 0; margin-bottom: 20px; flex-wrap: wrap; }
+.platform-bar { display: flex; gap: 0; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
 .ptab {
   padding: 5px 14px; font-size: 12px; color: var(--muted);
   border: none; background: none;
   border-bottom: 2px solid transparent;
 }
 .ptab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.hide-done-toggle {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--muted); cursor: pointer;
+  padding: 4px 8px;
+}
+.hide-done-toggle input { accent-color: var(--accent); cursor: pointer; }
 
 .stat-row { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
 .stat-tile {
@@ -170,6 +204,17 @@ async function addEvent() {
 
 .status-bar { padding: 8px 16px; font-size: 12px; color: var(--muted); }
 .status-bar.error { color: var(--urgent); }
+
+.spotlight-card {
+  background: var(--surface);
+  border: 1.5px solid #F59E0B;
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px rgba(245,158,11,.08);
+  margin-bottom: 16px;
+  overflow: hidden;
+  position: relative;
+}
+.spotlight-title { color: #835B00 !important; }
 
 .card {
   background: var(--surface);

@@ -308,6 +308,7 @@ def _to_event(hw: Homework, course_id: str) -> ScheduleEventCreate:
     return ScheduleEventCreate(
         platform=NAME,
         source_id=f"course:{course_id}:hw:{hw.homework_id}",
+        course=course_id,
         title=hw.title,
         description=hw.content,
         end_at=_parse_deadline_to_utc(hw.deadline),
