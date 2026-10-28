@@ -54,6 +54,12 @@ function toPercent(ms: number): number {
 }
 const nowPercent = computed(() => toPercent(now.value))
 
+function eventPct(e: ScheduleEvent): number {
+  if (!e.end_at) return 0
+  const ms = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
+  return toPercent(ms)
+}
+
 // ── Urgency ──────────────────────────────────────────────────────────────────
 function urgency(e: ScheduleEvent): 'urgent' | 'warn' | 'done' | 'normal' {
   if (e.status === 'submitted') return 'done'
@@ -129,7 +135,7 @@ function fmtFull(iso: string | null): string {
   <div class="timeline-view">
     <div class="tl-header">
       <h2 class="tl-title">时间轴</h2>
-      <span class="tl-range">未来 {{ WINDOW_FUTURE_D }} 天</span>
+      <span class="tl-range">未来 {{ WINDOW_FUTURE_D }} 天 · 过去 {{ WINDOW_PAST_H }} 小时</span>
     </div>
 
     <!-- legend -->
@@ -140,58 +146,63 @@ function fmtFull(iso: string | null): string {
     </div>
 
     <div class="tl-wrap">
-      <!-- axis -->
-      <div class="axis">
-        <div class="axis-track">
-          <!-- ticks -->
-          <div
-            v-for="(t, i) in ticks"
-            :key="i"
-            class="tick"
-            :class="{ major: t.major }"
-            :style="{ left: t.pct + '%' }"
-          >
-            <span class="tick-label" v-if="t.major">{{ t.label }}</span>
-          </div>
-          <!-- now line -->
-          <div class="now-line" :style="{ left: nowPercent + '%' }">
-            <span class="now-label">现在</span>
+      <!-- axis: label cell + track cell share the grid -->
+      <div class="axis-row">
+        <div class="row-label"></div>
+        <div class="track-cell">
+          <div class="axis-track">
+            <div
+              v-for="(t, i) in ticks"
+              :key="i"
+              class="tick"
+              :class="{ major: t.major }"
+              :style="{ left: t.pct + '%' }"
+            >
+              <span class="tick-label" v-if="t.major">{{ t.label }}</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- event lanes -->
+      <!-- lanes + shared now-line overlay -->
       <div class="lanes">
-        <div
-          v-for="e in visibleEvents"
-          :key="e.id"
-          class="lane"
-        >
-          <div class="lane-label">{{ e.platform }}</div>
-          <div class="lane-track">
-            <!-- time bar from nowPercent to event position (or from left edge) -->
-            <div
-              class="bar-fill"
-              :class="`fill-${urgency(e)}`"
-              :style="{
-                left: Math.max(0, nowPercent) + '%',
-                width: Math.max(0, toPercent(Date.parse(e.end_at! + (e.end_at!.endsWith('Z') ? '' : 'Z'))) - nowPercent) + '%',
-              }"
-            ></div>
-            <!-- event node -->
-            <button
-              class="event-node"
-              :class="`node-${urgency(e)}`"
-              :style="{
-                left: toPercent(Date.parse(e.end_at! + (e.end_at!.endsWith('Z') ? '' : 'Z'))) + '%',
-                borderColor: platformColor(e.platform),
-              }"
-              @click="select(e)"
-              :title="e.title"
-            >
-              <span class="node-title">{{ e.title }}</span>
-              <span class="node-cd">{{ countdown(e) }}</span>
-            </button>
+        <!-- now-line overlay: same grid as lane rows so the line sits in the
+             track column and nowPercent resolves against track width -->
+        <div class="now-overlay-row">
+          <div class="row-label"></div>
+          <div class="track-cell now-track-cell">
+            <div class="now-line" :style="{ left: nowPercent + '%' }">
+              <span class="now-label">现在</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-for="e in visibleEvents" :key="e.id" class="lane-row">
+          <div class="row-label">{{ e.platform }}</div>
+          <div class="track-cell">
+            <div class="lane-track">
+              <div
+                class="bar-fill"
+                :class="`fill-${urgency(e)}`"
+                :style="{
+                  left: Math.max(0, Math.min(100, nowPercent)) + '%',
+                  width: Math.max(0, Math.min(100, eventPct(e) - nowPercent)) + '%',
+                }"
+              ></div>
+              <button
+                class="event-node"
+                :class="`node-${urgency(e)}`"
+                :style="{
+                  left: eventPct(e) + '%',
+                  borderColor: platformColor(e.platform),
+                }"
+                @click="select(e)"
+                :title="e.title"
+              >
+                <span class="node-title">{{ e.title }}</span>
+                <span class="node-cd">{{ countdown(e) }}</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -199,9 +210,6 @@ function fmtFull(iso: string | null): string {
           窗口内无事项
         </div>
       </div>
-
-      <!-- now line overlay (full height) -->
-      <div class="now-overlay" :style="{ left: nowPercent + '%' }"></div>
     </div>
 
     <!-- detail panel -->
@@ -238,27 +246,50 @@ function fmtFull(iso: string | null): string {
 .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); font-family: var(--mono); }
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
-/* wrap */
+/* ── Outer wrapper ── */
 .tl-wrap {
-  position: relative;
   background: var(--surface);
   backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow-sm);
   overflow-x: auto;
-  overflow-y: visible;
   padding-bottom: 8px;
 }
 
-/* axis */
-.axis { padding: 0 120px; }
+/* ── Shared two-column grid: label + track ──
+   All rows (axis + lanes) use this so percentages are in the same column. */
+.axis-row,
+.lane-row {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+}
+
+/* label cell */
+.row-label {
+  padding: 0 8px 0 12px;
+  display: flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* track cell — all percentage positioning is inside this */
+.track-cell {
+  position: relative;
+  min-width: 0;
+}
+
+/* ── Axis ── */
 .axis-track {
   position: relative;
   height: 28px;
   border-bottom: 1px solid var(--border-strong);
-  margin-bottom: 4px;
 }
+
 .tick {
   position: absolute;
   top: 0; bottom: 0;
@@ -267,23 +298,43 @@ function fmtFull(iso: string | null): string {
 .tick.major { border-left-color: var(--border-strong); }
 .tick-label {
   position: absolute;
-  top: 6px;
-  left: 4px;
+  top: 6px; left: 4px;
   font-size: 10px;
   font-family: var(--mono);
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* ── Lanes area + now-line overlay ── */
+.lanes {
+  position: relative;
+}
+
+/* now-line overlay row — shares the same two-column grid so the line
+   sits inside the track column and nowPercent resolves against track width */
+.now-overlay-row {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 0; right: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+.now-track-cell {
+  position: relative;
+}
+
 .now-line {
   position: absolute;
-  top: 0; bottom: -4px;
+  top: 0; bottom: 0;
   border-left: 2px solid var(--accent);
-  z-index: 10;
+  pointer-events: none;
   animation: nowPulse 2s ease-in-out infinite;
 }
 .now-label {
   position: absolute;
-  top: 5px; left: 4px;
+  top: 4px; left: 4px;
   font-size: 10px; font-weight: 600;
   color: var(--accent);
   white-space: nowrap;
@@ -291,49 +342,26 @@ function fmtFull(iso: string | null): string {
 }
 @keyframes nowPulse {
   0%, 100% { opacity: 1; }
-  50%       { opacity: .55; }
+  50%       { opacity: .5; }
 }
 
-/* now overlay (full-height ghost line) */
-.now-overlay {
-  position: absolute;
-  top: 28px; bottom: 0;
-  border-left: 1px dashed rgba(0,103,192,.3);
-  pointer-events: none;
-  z-index: 5;
-}
-
-/* lanes */
-.lanes { padding: 0 0 4px; }
-.lane {
-  display: flex;
-  align-items: center;
-  min-height: 52px;
+/* Lane rows */
+.lane-row {
   border-bottom: 1px solid var(--border);
-  padding: 0 8px;
 }
-.lane:last-child { border-bottom: none; }
-.lane-label {
-  width: 100px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
-  flex-shrink: 0;
-  padding-right: 8px;
-}
+.lane-row:last-child { border-bottom: none; }
+.lane-row .row-label { min-height: 52px; }
+
 .lane-track {
-  flex: 1;
   position: relative;
-  height: 44px;
+  height: 52px;
 }
 
 /* bar fill */
 .bar-fill {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 3px;
-  opacity: .35;
+  top: 50%; transform: translateY(-50%);
+  height: 3px; opacity: .4;
   border-radius: 2px;
   pointer-events: none;
 }
@@ -345,11 +373,8 @@ function fmtFull(iso: string | null): string {
 /* event node */
 .event-node {
   position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  top: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center;
   background: var(--surface-solid);
   border: 2px solid var(--accent);
   border-radius: 6px;
@@ -357,38 +382,30 @@ function fmtFull(iso: string | null): string {
   box-shadow: var(--shadow-sm);
   cursor: pointer;
   z-index: 10;
-  min-width: 90px;
-  max-width: 160px;
-  transition: box-shadow .12s, transform .12s;
+  min-width: 88px; max-width: 160px;
   white-space: nowrap;
+  transition: box-shadow .12s, transform .12s;
 }
 .event-node:hover {
   box-shadow: var(--shadow-md);
-  transform: translate(-50%, -54%);
+  transform: translate(-50%, -56%);
 }
 .node-title {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 140px;
+  font-size: 10px; font-weight: 500; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; max-width: 144px;
 }
 .node-cd {
-  font-size: 9px;
-  font-family: var(--mono);
-  color: var(--muted);
-  margin-top: 1px;
+  font-size: 9px; font-family: var(--mono); color: var(--muted); margin-top: 1px;
 }
 .node-urgent .node-cd { color: var(--urgent); }
 .node-warn   .node-cd { color: var(--warn); }
 .node-urgent { border-color: var(--urgent) !important; }
 .node-warn   { border-color: #F59E0B !important; }
-.node-done   { opacity: .5; }
+.node-done   { opacity: .45; }
 
 .empty { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
 
-/* detail panel */
+/* ── Detail panel ── */
 .detail-panel {
   margin-top: 16px;
   background: var(--surface-solid);
@@ -402,11 +419,14 @@ function fmtFull(iso: string | null): string {
 .detail-close { border: none; background: none; color: var(--muted); font-size: 14px; cursor: pointer; }
 .detail-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; line-height: 1.35; }
 .detail-row { display: flex; gap: 12px; font-size: 12px; margin-bottom: 6px; }
-.detail-k { width: 48px; color: var(--muted); flex-shrink: 0; }
+.detail-k { width: 52px; color: var(--muted); flex-shrink: 0; }
 .detail-v { font-family: var(--mono); }
 .cd.cd-urgent { color: var(--urgent); font-weight: 600; }
 .cd.cd-warn   { color: var(--warn); }
-.detail-desc { margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.6; border-top: 1px solid var(--border); padding-top: 10px; }
+.detail-desc {
+  margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.6;
+  border-top: 1px solid var(--border); padding-top: 10px;
+}
 
 /* slide transition */
 .slide-enter-active, .slide-leave-active { transition: opacity .2s, transform .2s; }
