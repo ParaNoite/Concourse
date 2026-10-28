@@ -39,9 +39,9 @@ class CodeforcesFetcher:
             now = datetime.now(timezone.utc)
             events: list[ScheduleEventCreate] = []
             for c in data["result"]:
-                # phase: Before / Coding / SystemTest / Finished 等
+                # phase: BEFORE / CODING / SYSTEM_TEST / FINISHED (uppercase)
                 phase = c.get("phase", "")
-                if phase != "Before":
+                if phase != "BEFORE":
                     continue
 
                 start_ts = c.get("startTimeSeconds")
