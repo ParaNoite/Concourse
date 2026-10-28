@@ -35,18 +35,49 @@ function platformColor(p: string): string {
   return PLATFORM_COLORS[p] ?? '#767676'
 }
 
-// ── Events in window ─────────────────────────────────────────────────────────
+// ── Events in window, grouped by platform ────────────────────────────────────
 const visibleEvents = computed(() =>
   store.events.filter((e) => {
     if (!e.end_at) return false
     const d = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
     return d >= windowStart.value && d <= windowEnd.value
   }).sort((a, b) => {
-    const da = Date.parse(a.end_at! + 'Z')
-    const db = Date.parse(b.end_at! + 'Z')
+    if (a.platform !== b.platform) return a.platform.localeCompare(b.platform)
+    const da = Date.parse(a.end_at! + (a.end_at!.endsWith('Z') ? '' : 'Z'))
+    const db = Date.parse(b.end_at! + (b.end_at!.endsWith('Z') ? '' : 'Z'))
     return da - db
   })
 )
+
+// Group into platform swimlanes
+interface Lane { platform: string; events: typeof visibleEvents.value }
+const lanes = computed<Lane[]>(() => {
+  const map = new Map<string, Lane>()
+  for (const e of visibleEvents.value) {
+    if (!map.has(e.platform)) map.set(e.platform, { platform: e.platform, events: [] })
+    map.get(e.platform)!.events.push(e)
+  }
+  return Array.from(map.values())
+})
+
+// Within a lane, assign a vertical row (0 or 1) to avoid node overlap
+// Two nodes conflict if they are within 14% of each other horizontally
+function rowAssignments(events: typeof visibleEvents.value): number[] {
+  const rows: number[] = []
+  const pcts = events.map(e => eventPct(e))
+  for (let i = 0; i < events.length; i++) {
+    // try row 0, then 1, then 2
+    let assigned = 0
+    for (let row = 0; row <= 2; row++) {
+      const conflict = rows.slice(0, i).some(
+        (r, j) => r === row && Math.abs(pcts[j] - pcts[i]) < 14
+      )
+      if (!conflict) { assigned = row; break }
+    }
+    rows.push(assigned)
+  }
+  return rows
+}
 
 // ── Position helpers (0–100%) ─────────────────────────────────────────────────
 function toPercent(ms: number): number {
@@ -166,8 +197,6 @@ function fmtFull(iso: string | null): string {
 
       <!-- lanes + shared now-line overlay -->
       <div class="lanes">
-        <!-- now-line overlay: same grid as lane rows so the line sits in the
-             track column and nowPercent resolves against track width -->
         <div class="now-overlay-row">
           <div class="row-label"></div>
           <div class="track-cell now-track-cell">
@@ -177,36 +206,40 @@ function fmtFull(iso: string | null): string {
           </div>
         </div>
 
-        <div v-for="e in visibleEvents" :key="e.id" class="lane-row">
-          <div class="row-label">{{ e.platform }}</div>
+        <div v-for="lane in lanes" :key="lane.platform" class="lane-row">
+          <div class="row-label" :style="{ color: platformColor(lane.platform) }">{{ lane.platform }}</div>
           <div class="track-cell">
-            <div class="lane-track">
-              <div
-                class="bar-fill"
-                :class="`fill-${urgency(e)}`"
-                :style="{
-                  left: Math.max(0, Math.min(100, nowPercent)) + '%',
-                  width: Math.max(0, Math.min(100, eventPct(e) - nowPercent)) + '%',
-                }"
-              ></div>
-              <button
-                class="event-node"
-                :class="`node-${urgency(e)}`"
-                :style="{
-                  left: eventPct(e) + '%',
-                  borderColor: platformColor(e.platform),
-                }"
-                @click="select(e)"
-                :title="e.title"
-              >
-                <span class="node-title">{{ e.title }}</span>
-                <span class="node-cd">{{ countdown(e) }}</span>
-              </button>
+            <div class="lane-track" :style="{ height: (40 + Math.max(...rowAssignments(lane.events)) * 44) + 'px' }">
+              <template v-for="(e, idx) in lane.events" :key="e.id">
+                <div
+                  class="bar-fill"
+                  :class="`fill-${urgency(e)}`"
+                  :style="{
+                    left: Math.max(0, Math.min(100, nowPercent)) + '%',
+                    width: Math.max(0, Math.min(100, eventPct(e) - nowPercent)) + '%',
+                    top: (6 + rowAssignments(lane.events)[idx] * 44) + 'px',
+                  }"
+                ></div>
+                <button
+                  class="event-node"
+                  :class="`node-${urgency(e)}`"
+                  :style="{
+                    left: eventPct(e) + '%',
+                    top: (22 + rowAssignments(lane.events)[idx] * 44) + 'px',
+                    borderColor: platformColor(e.platform),
+                  }"
+                  @click="select(e)"
+                  :title="e.title"
+                >
+                  <span class="node-title">{{ e.title }}</span>
+                  <span class="node-cd">{{ countdown(e) }}</span>
+                </button>
+              </template>
             </div>
           </div>
         </div>
 
-        <div v-if="!visibleEvents.length && !store.loading" class="empty">
+        <div v-if="!lanes.length && !store.loading" class="empty">
           窗口内无事项
         </div>
       </div>
@@ -225,6 +258,10 @@ function fmtFull(iso: string | null): string {
         <div class="detail-row"><span class="detail-k">状态</span><span class="detail-v">{{ selected.status }}</span></div>
         <div class="detail-row"><span class="detail-k">提交</span><span class="detail-v">{{ selected.submission_policy }}</span></div>
         <div v-if="selected.description" class="detail-desc">{{ selected.description.slice(0, 200) }}{{ selected.description.length > 200 ? '…' : '' }}</div>
+        <div class="detail-row" v-if="selected.raw_payload?.proposed_by || selected.raw_payload?.publisher">
+          <span class="detail-k">来源</span>
+          <span class="detail-v">{{ selected.raw_payload?.proposed_by ?? selected.raw_payload?.publisher ?? '—' }}</span>
+        </div>
       </div>
     </transition>
   </div>
@@ -293,9 +330,13 @@ function fmtFull(iso: string | null): string {
 .tick {
   position: absolute;
   top: 0; bottom: 0;
-  border-left: 1px solid var(--border);
+  width: 1px;
+  background: var(--border);
 }
-.tick.major { border-left-color: var(--border-strong); }
+.tick.major {
+  width: 2px;
+  background: var(--border-strong);
+}
 .tick-label {
   position: absolute;
   top: 6px; left: 4px;
@@ -350,30 +391,35 @@ function fmtFull(iso: string | null): string {
   border-bottom: 1px solid var(--border);
 }
 .lane-row:last-child { border-bottom: none; }
-.lane-row .row-label { min-height: 52px; }
+.lane-row .row-label {
+  min-height: 52px;
+  font-weight: 500;
+  font-size: 11px;
+}
 
 .lane-track {
   position: relative;
-  height: 52px;
+  min-height: 52px;
 }
 
 /* bar fill */
 .bar-fill {
   position: absolute;
-  top: 50%; transform: translateY(-50%);
-  height: 3px; opacity: .4;
+  height: 3px;
+  opacity: .4;
   border-radius: 2px;
   pointer-events: none;
+  transform: translateY(-50%);
 }
 .fill-urgent { background: var(--urgent); }
 .fill-warn   { background: #F59E0B; }
 .fill-normal { background: var(--accent); }
 .fill-done   { background: var(--done); }
 
-/* event node */
+/* event node — top is set inline per-row */
 .event-node {
   position: absolute;
-  top: 50%; transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center;
   background: var(--surface-solid);
   border: 2px solid var(--accent);
@@ -388,7 +434,7 @@ function fmtFull(iso: string | null): string {
 }
 .event-node:hover {
   box-shadow: var(--shadow-md);
-  transform: translate(-50%, -56%);
+  transform: translateX(-50%) translateY(-4px);
 }
 .node-title {
   font-size: 10px; font-weight: 500; color: var(--text);

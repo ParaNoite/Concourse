@@ -1,54 +1,67 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, computed, ref } from 'vue'
 import { useEventsStore } from '../stores/events'
 import StagedPanel from '../components/StagedPanel.vue'
 import EventRow from '../components/EventRow.vue'
 
 const store = useEventsStore()
 
-onMounted(() => {
-  store.startPoll()
-  store.startTick()
-})
-onUnmounted(() => {
-  store.stopPoll()
-  store.stopTick()
+onMounted(() => { store.startPoll(); store.startTick() })
+onUnmounted(() => { store.stopPoll(); store.stopTick() })
+
+const PLATFORM_COLORS: Record<string, string> = {
+  scholat: '#0067C0', pigai: '#107C10', moodle: '#FF8C00',
+  itestcloud: '#8764B8', welearn: '#00B7C3', codeforces: '#C50F1F', manual: '#767676',
+}
+function platformColor(p: string): string { return PLATFORM_COLORS[p] ?? '#767676' }
+
+// Group filtered events by platform, sorted by earliest deadline within each group
+const platformGroups = computed(() => {
+  const map = new Map<string, typeof store.filteredEvents>()
+  for (const e of store.filteredEvents) {
+    if (!map.has(e.platform)) map.set(e.platform, [])
+    map.get(e.platform)!.push(e)
+  }
+  // sort within each platform by end_at
+  for (const arr of map.values()) {
+    arr.sort((a, b) => {
+      if (!a.end_at) return 1
+      if (!b.end_at) return -1
+      return Date.parse(a.end_at + 'Z') - Date.parse(b.end_at + 'Z')
+    })
+  }
+  // sort platforms by their earliest deadline
+  return Array.from(map.entries())
+    .sort((a, b) => {
+      const ea = a[1][0]?.end_at
+      const eb = b[1][0]?.end_at
+      if (!ea) return 1; if (!eb) return -1
+      return Date.parse(ea + 'Z') - Date.parse(eb + 'Z')
+    })
+    .map(([platform, events]) => ({ platform, events }))
 })
 
 const addText = ref('')
 const adding = ref(false)
 const addError = ref('')
-
-import { ref } from 'vue'
 const BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
 async function addEvent() {
   if (!addText.value.trim()) return
-  adding.value = true
-  addError.value = ''
+  adding.value = true; addError.value = ''
   try {
     const token = (import.meta.env.VITE_AGENT_TOKEN as string) || ''
     const resp = await fetch(`${BASE}/agent`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ message: addText.value }),
     })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const data = await resp.json()
-    if (data.staged_ids?.length) {
-      await store.fetchEvents()
-      addText.value = ''
-    } else {
-      addError.value = data.reply || '未生成暂存事项'
-    }
-  } catch (e: any) {
-    addError.value = e.message
-  } finally {
-    adding.value = false
-  }
+    if (data.staged_ids?.length) { await store.fetchEvents(); addText.value = '' }
+    else addError.value = data.reply || '未生成暂存事项'
+  } catch (e: any) { addError.value = e.message }
+  finally { adding.value = false }
 }
 </script>
 
@@ -92,41 +105,21 @@ async function addEvent() {
     <!-- staged -->
     <StagedPanel />
 
-    <!-- urgent -->
-    <div v-if="store.urgentEvents.length" class="card">
+    <!-- per-platform cards -->
+    <div v-for="group in platformGroups" :key="group.platform" class="card">
       <div class="card-header">
-        <span class="card-title">紧急 — 48 小时内</span>
-        <span class="card-count urgent">{{ store.urgentEvents.length }}</span>
+        <span class="card-title" :style="{ color: platformColor(group.platform) }">{{ group.platform }}</span>
+        <span class="card-count">{{ group.events.length }}</span>
       </div>
-      <EventRow v-for="e in store.urgentEvents" :key="e.id" :event="e" urgency="urgent" />
+      <EventRow
+        v-for="e in group.events"
+        :key="e.id"
+        :event="e"
+        :urgency="store.urgencyOf(e)"
+      />
     </div>
 
-    <!-- this week -->
-    <div v-if="store.warnEvents.length" class="card">
-      <div class="card-header">
-        <span class="card-title">本周</span>
-        <span class="card-count">{{ store.warnEvents.length }}</span>
-      </div>
-      <EventRow v-for="e in store.warnEvents" :key="e.id" :event="e" urgency="warn" />
-    </div>
-
-    <!-- upcoming -->
-    <div v-if="store.normalEvents.length" class="card">
-      <div class="card-header">
-        <span class="card-title">即将到来</span>
-        <span class="card-count">{{ store.normalEvents.length }}</span>
-      </div>
-      <EventRow v-for="e in store.normalEvents" :key="e.id" :event="e" urgency="normal" />
-    </div>
-
-    <!-- done -->
-    <div v-if="store.doneEvents.length" class="card">
-      <div class="card-header">
-        <span class="card-title">已完成</span>
-        <span class="card-count">{{ store.doneEvents.length }}</span>
-      </div>
-      <EventRow v-for="e in store.doneEvents" :key="e.id" :event="e" urgency="done" />
-    </div>
+    <div v-if="!store.filteredEvents.length && !store.loading" class="empty">无事项</div>
 
     <!-- add strip -->
     <div class="add-card">
@@ -229,4 +222,5 @@ async function addEvent() {
 .add-strip button:disabled { opacity: .6; cursor: default; }
 .add-error { font-size: 12px; color: var(--urgent); margin-top: 6px; }
 .add-hint { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
+.empty { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
 </style>
