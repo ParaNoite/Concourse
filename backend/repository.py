@@ -15,7 +15,7 @@ from shared.models import (
     StagedEvent,
     SubmissionPolicy,
     compute_content_hash,
-    to_naive_utc,
+    to_aware_utc,
 )
 
 
@@ -32,7 +32,7 @@ async def upsert_event(session: AsyncSession, ev: ScheduleEventCreate) -> tuple[
     content_hash = compute_content_hash(ev)
     stmt = select(Event).where(Event.platform == ev.platform, Event.source_id == ev.source_id)
     result = await session.exec(stmt)  # type: ignore[attr-defined]
-    existing: Event | None = result.first()
+    existing: Event | None = result.scalars().first()
 
     now = datetime.now(timezone.utc)
     if existing is not None:
@@ -43,8 +43,8 @@ async def upsert_event(session: AsyncSession, ev: ScheduleEventCreate) -> tuple[
             existing.description = ev.description
             existing.location = ev.location
             existing.meeting_url = ev.meeting_url
-            existing.start_at = to_naive_utc(ev.start_at)
-            existing.end_at = to_naive_utc(ev.end_at)
+            existing.start_at = to_aware_utc(ev.start_at)
+            existing.end_at = to_aware_utc(ev.end_at)
             existing.tz_original = ev.tz_original
             existing.all_day = ev.all_day
             existing.status = ev.status
@@ -68,8 +68,8 @@ async def upsert_event(session: AsyncSession, ev: ScheduleEventCreate) -> tuple[
         description=ev.description,
         location=ev.location,
         meeting_url=ev.meeting_url,
-        start_at=to_naive_utc(ev.start_at),
-        end_at=to_naive_utc(ev.end_at),
+        start_at=to_aware_utc(ev.start_at),
+        end_at=to_aware_utc(ev.end_at),
         tz_original=ev.tz_original,
         all_day=ev.all_day,
         status=ev.status,
@@ -106,12 +106,12 @@ async def list_events(
     if status:
         stmt = stmt.where(Event.status == status)
     if end_after:
-        stmt = stmt.where(Event.end_at >= to_naive_utc(end_after))
+        stmt = stmt.where(Event.end_at >= to_aware_utc(end_after))
     if end_before:
-        stmt = stmt.where(Event.end_at <= to_naive_utc(end_before))
+        stmt = stmt.where(Event.end_at <= to_aware_utc(end_before))
     stmt = stmt.order_by(Event.end_at.asc().nulls_last()).offset(offset).limit(limit)
     result = await session.exec(stmt)  # type: ignore[attr-defined]
-    return list(result.all())
+    return list(result.scalars().all())
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +133,8 @@ async def create_staged(
         source_id=str(uuid.uuid4()),
         title=title,
         description=description,
-        start_at=to_naive_utc(start_at),
-        end_at=to_naive_utc(end_at),
+        start_at=to_aware_utc(start_at),
+        end_at=to_aware_utc(end_at),
         submission_policy=submission_policy,
         proposed_by=proposed_by,
         raw_payload=raw_payload or {},
