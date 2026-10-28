@@ -1,5 +1,6 @@
 .env
 .browser-data/
+.debug/
 credentials/
 concourse.db
 __pycache__/

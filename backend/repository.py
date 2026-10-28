@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.db import SessionLocal
 from shared.models import (
     Event,
+    FetcherState,
     ScheduleEventCreate,
     StagedEvent,
     SubmissionPolicy,
@@ -48,7 +49,9 @@ async def upsert_event(session: AsyncSession, ev: ScheduleEventCreate) -> tuple[
             existing.end_at = to_aware_utc(ev.end_at)
             existing.tz_original = ev.tz_original
             existing.all_day = ev.all_day
-            existing.status = ev.status
+            # 用户手动标记的 done 不被抓取回来的 open/unknown 覆盖
+            if not (existing.status == "done" and ev.status in ("open", "unknown")):
+                existing.status = ev.status
             existing.submission_policy = ev.submission_policy
             existing.organizer_name = ev.organizer_name
             existing.organizer_email = ev.organizer_email
@@ -252,3 +255,36 @@ async def dismiss_staged(session: AsyncSession, staged_id: int) -> bool:
     await session.delete(staged)
     await session.commit()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Fetcher 状态
+# ---------------------------------------------------------------------------
+async def get_fetcher_state(session: AsyncSession, name: str) -> FetcherState | None:
+    return await session.get(FetcherState, name)
+
+
+async def list_fetcher_states(session: AsyncSession) -> list[FetcherState]:
+    result = await session.exec(select(FetcherState))  # type: ignore[attr-defined]
+    return list(result.scalars().all())
+
+
+async def update_fetcher_settings(
+    session: AsyncSession,
+    name: str,
+    *,
+    default_enabled: bool,
+    changes: dict,
+) -> FetcherState:
+    """changes 只含调用方显式提供的键：enabled / cron（cron=None 表示恢复默认）。"""
+    state = await session.get(FetcherState, name)
+    if state is None:
+        state = FetcherState(name=name, enabled=default_enabled)
+    if "enabled" in changes:
+        state.enabled = changes["enabled"]
+    if "cron" in changes:
+        state.cron = changes["cron"] or None
+    session.add(state)
+    await session.commit()
+    await session.refresh(state)
+    return state

@@ -268,8 +268,10 @@ async def _cmd_trash(args: argparse.Namespace) -> None:
 
 
 async def _cmd_fetch(args: argparse.Namespace) -> None:
+    from backend.db import init_db
     from backend.scheduler import run_fetcher
-    await run_fetcher(args.platform)
+    await init_db()
+    await run_fetcher(args.platform, trigger="cli")
 
 
 async def _cmd_creds(args: argparse.Namespace) -> None:

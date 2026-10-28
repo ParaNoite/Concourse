@@ -48,6 +48,8 @@ class Homework:
     deadline: str = ""
     content: str = ""
     attachments: list[dict] = field(default_factory=list)
+    policy_raw: str = ""         # 截止日期格中的徽章，如 "不可延时提交"
+    submitted_link: bool = False  # 操作栏是否有 "已交" 链接
 
 
 UNSUBMITTED_STATUS = "未提交"
@@ -89,32 +91,44 @@ def _parse_deadline_to_utc(s: str) -> datetime | None:
     if not s:
         return None
     CST = timezone(timedelta(hours=8))
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
             naive = datetime.strptime(s.strip(), fmt)
             return naive.replace(tzinfo=CST).astimezone(timezone.utc)
         except ValueError:
             continue
-    return None
+    try:
+        # 只有日期时按当天结束处理
+        naive = datetime.strptime(s.strip(), "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        return naive.replace(tzinfo=CST).astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
-def _map_status(raw: str) -> str:
+# 学者网列表页状态徽章（页面说明）：未提交 / 按时提交 / 延时提交 / 已终止提交
+_SUBMITTED_STATUSES = ("按时提交", "延时提交", "已提交", "已批改", "已查看")
+
+
+def _map_status(raw: str, submitted_link: bool = False) -> str:
     n = _normalize(raw)
-    if n == "未提交":
+    if "未提交" in n:
         return "open"
-    if n in ("已提交", "已批改", "已查看"):
+    if "终止" in n:
+        # 老师关闭了提交：交过算 submitted，没交也已无法操作
+        return "submitted" if submitted_link else "closed"
+    if n in _SUBMITTED_STATUSES or submitted_link:
         return "submitted"
     return "unknown"
 
 
-def _infer_policy(raw: str) -> SubmissionPolicy:
-    n = _normalize(raw)
-    if "截止后可补交一次" in n:
+def _infer_policy(policy_raw: str) -> SubmissionPolicy:
+    n = _normalize(policy_raw)
+    if "不可延时" in n or "不可补交" in n:
+        return SubmissionPolicy.NONE
+    if "补交一次" in n:
         return SubmissionPolicy.ONCE
-    if "截止后可补交" in n:
+    if "延时" in n or "补交" in n:
         return SubmissionPolicy.LATE
-    if n == "未提交":
-        return SubmissionPolicy.UNLIMITED
     return SubmissionPolicy.NONE
 
 
@@ -139,13 +153,19 @@ def parse_homework_list(html: str, course_id: str) -> list[Homework]:
         status_cell = row.find("td", id=f"upload{homework_id}") or row.find("td")
         status = _normalize_keep(status_cell.get_text(" ", strip=True)) if status_cell else ""
         title = _normalize_keep(link.get("title") or link.get_text(" ", strip=True))
-        publisher, deadline = "", ""
+        publisher, deadline, policy_raw = "", "", ""
         for cell in row.find_all("td"):
             txt = _normalize_keep(cell.get_text(" ", strip=True))
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}(\s+\d{2}:\d{2}(:\d{2})?)?", txt):
-                deadline = txt
+            dm = re.match(r"\d{4}-\d{2}-\d{2}(\s+\d{2}:\d{2}(:\d{2})?)?", txt)
+            if dm and not deadline:
+                # 截止日期格可能带提交规则徽章："2026-11-05 不可延时提交"
+                deadline = dm.group(0)
+                policy_raw = txt[dm.end():].strip()
             elif publisher == "" and cell.find("a", href=re.compile(r"^\.\./|^/")) and "作业要求" not in txt:
                 publisher = txt
+        submitted_link = any(
+            _normalize(a.get_text()) == "已交" for a in row.find_all("a")
+        )
         result.append(
             Homework(
                 homework_id=homework_id,
@@ -154,6 +174,8 @@ def parse_homework_list(html: str, course_id: str) -> list[Homework]:
                 url=urljoin(BASE + "/course/", href),
                 publisher=publisher,
                 deadline=deadline,
+                policy_raw=policy_raw,
+                submitted_link=submitted_link,
             )
         )
     return result
@@ -293,7 +315,7 @@ class ScholatFetcher:
                         continue
                     homeworks = parse_homework_list(await resp.text(), course_id)
                     for hw in homeworks:
-                        if not self.include_submitted and _map_status(hw.status) != "open":
+                        if not self.include_submitted and _map_status(hw.status, hw.submitted_link) != "open":
                             continue
                         detail_resp = await context.request.get(hw.url, timeout=30000)
                         if detail_resp.ok:
@@ -313,13 +335,16 @@ def _to_event(hw: Homework, course_id: str) -> ScheduleEventCreate:
         description=hw.content,
         end_at=_parse_deadline_to_utc(hw.deadline),
         tz_original="Asia/Shanghai",
-        status=_map_status(hw.status),
-        submission_policy=_infer_policy(hw.status),
+        status=_map_status(hw.status, hw.submitted_link),
+        submission_policy=_infer_policy(hw.policy_raw),
         organizer_name=hw.publisher or None,
         meeting_url=hw.url,
         raw_payload={
             "publisher": hw.publisher,
             "deadline_raw": hw.deadline,
+            "status_raw": hw.status,
+            "policy_raw": hw.policy_raw,
+            "submitted_link": hw.submitted_link,
             "attachments": hw.attachments,
             "course_id": course_id,
         },

@@ -3,22 +3,12 @@ import { onMounted, onUnmounted, computed, ref } from 'vue'
 import { useEventsStore } from '../stores/events'
 import StagedPanel from '../components/StagedPanel.vue'
 import EventRow from '../components/EventRow.vue'
+import { displayName, platformColor } from '../platforms'
 
 const store = useEventsStore()
 
 onMounted(() => { store.startPoll(); store.startTick() })
 onUnmounted(() => { store.stopPoll(); store.stopTick() })
-
-const PLATFORM_COLORS: Record<string, string> = {
-  scholat: '#0067C0', pigai: '#107C10', moodle: '#FF8C00',
-  itestcloud: '#8764B8', welearn: '#00B7C3', codeforces: '#6B3FA0', manual: '#5C7A8A',
-}
-const PLATFORM_DISPLAY: Record<string, string> = {
-  scholat: '学者网', pigai: '批改网', moodle: 'Moodle',
-  itestcloud: 'iTest', welearn: 'WeLearn', codeforces: 'Codeforces', manual: '手动添加',
-}
-function platformColor(p: string): string { return PLATFORM_COLORS[p] ?? '#767676' }
-function displayName(p: string): string { return PLATFORM_DISPLAY[p] ?? p }
 
 // Group filtered events by platform, sorted by urgency then deadline within each group
 const platformGroups = computed(() => {

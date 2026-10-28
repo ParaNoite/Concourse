@@ -100,6 +100,25 @@ class StagedEvent(SQLModel, table=True):
     course: str = SQLField(default="", index=True)
 
 
+class FetcherState(SQLModel, table=True):
+    """Fetcher 的运行时设置（覆盖 config.yaml）与最近一次运行结果。"""
+
+    __tablename__ = "fetcher_states"
+
+    name: str = SQLField(primary_key=True)
+    enabled: bool = True
+    cron: str | None = None  # None = 使用 config.yaml schedule 中的默认值
+    last_trigger: str | None = None  # schedule | manual | cli
+    last_started_at: datetime | None = None
+    last_finished_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_status: str | None = None  # ok | error
+    last_error: str = ""
+    last_count: int = 0
+    last_changed: int = 0
+    last_duration_ms: int = 0
+
+
 def compute_content_hash(ev: ScheduleEventCreate) -> str:
     payload = {
         "platform": ev.platform,

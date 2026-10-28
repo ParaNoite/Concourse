@@ -46,3 +46,23 @@ export interface StagedEvent {
 export interface AddEventPayload {
   message: string
 }
+
+export interface FetcherInfo {
+  name: string
+  enabled: boolean
+  cron: string
+  cron_default: string
+  cron_overridden: boolean
+  running: boolean
+  next_run_at: string | null
+  config: Record<string, any>
+  last_trigger: 'schedule' | 'manual' | 'cli' | null
+  last_started_at: string | null
+  last_finished_at: string | null
+  last_success_at: string | null
+  last_status: 'ok' | 'error' | null
+  last_error: string
+  last_count: number
+  last_changed: number
+  last_duration_ms: number
+}

@@ -43,6 +43,11 @@ def schedule_for(name: str) -> str:
     return (_config.get("schedule") or {}).get(name) or "0 * * * *"
 
 
+def configured_fetchers() -> list[str]:
+    names = set((_config.get("schedule") or {})) | set((_config.get("fetchers") or {}))
+    return sorted(names)
+
+
 def agent_allowed_actions() -> list[str]:
     return (_config.get("agent") or {}).get("allowed_actions") or []
 

@@ -2,16 +2,11 @@
 import { onMounted, computed } from 'vue'
 import { useEventsStore } from '../stores/events'
 import type { ScheduleEvent } from '../types'
+import { displayName } from '../platforms'
 
 const store = useEventsStore()
 
 onMounted(() => { store.fetchTrash() })
-
-const PLATFORM_DISPLAY: Record<string, string> = {
-  scholat: '学者网', pigai: '批改网', moodle: 'Moodle',
-  itestcloud: 'iTest', welearn: 'WeLearn', codeforces: 'Codeforces', manual: '手动添加',
-}
-function displayName(p: string): string { return PLATFORM_DISPLAY[p] ?? p }
 
 const items = computed(() => store.trash)
 

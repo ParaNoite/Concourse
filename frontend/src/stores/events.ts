@@ -35,7 +35,7 @@ export const useEventsStore = defineStore('events', () => {
   }
 
   function urgencyOf(e: ScheduleEvent): 'urgent' | 'warn' | 'normal' | 'done' {
-    if (e.status === 'submitted' || e.status === 'done') return 'done'
+    if (['submitted', 'done', 'closed'].includes(e.status)) return 'done'
     if (!e.end_at) return 'normal'
     const ms = parseMs(e.end_at) - now.value.getTime()
     if (ms < 0) return 'done'

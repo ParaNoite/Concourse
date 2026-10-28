@@ -12,7 +12,7 @@ fetchers:
     notify_registered: true
     notify_unregistered: true
   scholat:
-    course_ids: ["3017", "3042"]
+    course_ids: ["3017", "3042","3854"]
     include_submitted: true
     headless: true
 

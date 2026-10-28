@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db import init_db
@@ -19,14 +20,16 @@ from backend.repository import (
     dismiss_staged,
     get_session,
     list_events,
+    list_fetcher_states,
     list_staged,
     list_trash,
     mark_done,
     permanent_delete_event,
     restore_event,
+    update_fetcher_settings,
 )
 from shared.config import secrets
-from shared.models import Event, StagedEvent, SubmissionPolicy
+from shared.models import Event, FetcherState, StagedEvent, SubmissionPolicy, to_aware_utc
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -44,8 +47,7 @@ def _require_agent_token(
 async def _lifespan(app: FastAPI):
     await init_db()
     from backend.scheduler import start_scheduler, stop_scheduler
-    sched = start_scheduler()
-    sched.start()
+    await start_scheduler()
     yield
     await stop_scheduler()
 
@@ -146,13 +148,111 @@ async def dismiss_staged_event(staged_id: int, session: Session):
 
 
 # ---------------------------------------------------------------------------
+# Fetchers（启停、频率、运行状态、立即触发）
+# ---------------------------------------------------------------------------
+class FetcherInfo(BaseModel):
+    name: str
+    enabled: bool
+    cron: str
+    cron_default: str
+    cron_overridden: bool
+    running: bool
+    next_run_at: datetime | None
+    config: dict
+    last_trigger: str | None = None
+    last_started_at: datetime | None = None
+    last_finished_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_status: str | None = None
+    last_error: str = ""
+    last_count: int = 0
+    last_changed: int = 0
+    last_duration_ms: int = 0
+
+
+class FetcherPatch(BaseModel):
+    enabled: bool | None = None
+    cron: str | None = None  # 显式传 null 或 "" 恢复 config.yaml 默认值
+
+
+def _fetcher_info(name: str, state: FetcherState | None) -> FetcherInfo:
+    from backend import scheduler as sch
+    from shared import config as cfg
+
+    enabled, cron = sch.effective(name, state)
+    s = state or FetcherState(name=name)
+    return FetcherInfo(
+        name=name,
+        enabled=enabled,
+        cron=cron,
+        cron_default=cfg.schedule_for(name),
+        cron_overridden=bool(state and state.cron),
+        running=sch.is_running(name),
+        next_run_at=sch.next_run_at(name) if enabled else None,
+        config=cfg.fetcher_kwargs(name),
+        last_trigger=s.last_trigger,
+        last_started_at=to_aware_utc(s.last_started_at),
+        last_finished_at=to_aware_utc(s.last_finished_at),
+        last_success_at=to_aware_utc(s.last_success_at),
+        last_status=s.last_status,
+        last_error=s.last_error,
+        last_count=s.last_count,
+        last_changed=s.last_changed,
+        last_duration_ms=s.last_duration_ms,
+    )
+
+
+def _require_fetcher(name: str) -> None:
+    from backend.scheduler import available_fetchers
+
+    if name not in available_fetchers():
+        raise HTTPException(404, f"Unknown fetcher: {name}")
+
+
+@app.get("/fetchers", response_model=list[FetcherInfo])
+async def get_fetchers(session: Session):
+    from backend.scheduler import available_fetchers
+
+    states = {s.name: s for s in await list_fetcher_states(session)}
+    return [_fetcher_info(n, states.get(n)) for n in available_fetchers()]
+
+
+@app.patch("/fetchers/{name}", response_model=FetcherInfo)
+async def patch_fetcher(name: str, body: FetcherPatch, session: Session):
+    from backend import scheduler as sch
+
+    _require_fetcher(name)
+    changes = body.model_dump(exclude_unset=True)
+    if changes.get("enabled") is None:
+        changes.pop("enabled", None)
+    if changes.get("cron"):
+        changes["cron"] = changes["cron"].strip()
+        try:
+            sch.validate_cron(changes["cron"])
+        except ValueError as exc:
+            raise HTTPException(422, f"无效的 cron 表达式: {exc}") from exc
+    state = await update_fetcher_settings(
+        session, name, default_enabled=sch.default_enabled(name), changes=changes,
+    )
+    await sch.apply_settings(name)
+    return _fetcher_info(name, state)
+
+
+@app.post("/fetchers/{name}/run", status_code=202)
+async def run_fetcher_now(name: str):
+    from backend.scheduler import trigger_now
+
+    _require_fetcher(name)
+    if not trigger_now(name):
+        raise HTTPException(409, "Fetcher is already running")
+    return {"started": True}
+
+
+# ---------------------------------------------------------------------------
 # Agent endpoint
 # ---------------------------------------------------------------------------
 class AgentRequest(Exception):
     pass
-
-
-from pydantic import BaseModel
 
 
 class AgentQuery(BaseModel):

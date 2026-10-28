@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useEventsStore } from '../stores/events'
 import type { ScheduleEvent } from '../types'
+import { PLATFORM_COLORS, displayName, platformColor } from '../platforms'
 
 const store = useEventsStore()
 
@@ -20,30 +21,6 @@ onUnmounted(() => clearInterval(timer))
 
 const windowStart = computed(() => now.value - PAST_H * 3_600_000)
 const windowEnd   = computed(() => now.value + FUTURE_D * 24 * 3_600_000)
-
-// ── Platform display names ────────────────────────────────────────────────────
-const PLATFORM_DISPLAY: Record<string, string> = {
-  scholat:    '学者网',
-  pigai:      '批改网',
-  moodle:     'Moodle',
-  itestcloud: 'iTest',
-  welearn:    'WeLearn',
-  codeforces: 'Codeforces',
-  manual:     '手动添加',
-}
-function displayName(p: string): string { return PLATFORM_DISPLAY[p] ?? p }
-
-// ── Platform colors (not used for urgency) ────────────────────────────────────
-const PLATFORM_COLORS: Record<string, string> = {
-  scholat:    '#0067C0',
-  pigai:      '#107C10',
-  moodle:     '#FF8C00',
-  itestcloud: '#8764B8',
-  welearn:    '#00B7C3',
-  codeforces: '#6B3FA0',
-  manual:     '#5C7A8A',
-}
-function platformColor(p: string): string { return PLATFORM_COLORS[p] ?? '#767676' }
 
 // ── Pixel position helpers ────────────────────────────────────────────────────
 // Backend returns offsets like "+00:00"; appending "Z" to those yields invalid
@@ -65,7 +42,7 @@ function eventPx(e: ScheduleEvent): number {
 
 // ── Urgency ───────────────────────────────────────────────────────────────────
 function urgency(e: ScheduleEvent): 'urgent' | 'warn' | 'done' | 'normal' {
-  if (e.status === 'submitted') return 'done'
+  if (['submitted', 'done', 'closed'].includes(e.status)) return 'done'
   if (!e.end_at) return 'normal'
   const diff = parseMs(e.end_at) - now.value
   if (diff <= 0) return 'done'
