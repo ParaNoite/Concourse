@@ -5,114 +5,77 @@ import type { ScheduleEvent } from '../types'
 
 const store = useEventsStore()
 
-// ── Timeline window: now-1d to now+30d ─────────────────────────────────────
+// ── Fixed-pixel layout constants ─────────────────────────────────────────────
+const PX_PER_DAY  = 120   // pixels per day — change this to zoom
+const LABEL_W     = 120   // px for platform label column
+const PAST_H      = 24    // hours of history shown left of "now"
+const FUTURE_D    = 30    // days of future shown right of "now"
+const TOTAL_MS    = (PAST_H + FUTURE_D * 24) * 3_600_000
+const TOTAL_PX    = computed(() => (PAST_H / 24 + FUTURE_D) * PX_PER_DAY)
+
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval>
-onMounted(() => {
-  if (!store.events.length) store.fetchEvents()
-  timer = setInterval(() => { now.value = Date.now() }, 30_000)
-})
+onMounted(() => { if (!store.events.length) store.fetchEvents(); timer = setInterval(() => { now.value = Date.now() }, 30_000) })
 onUnmounted(() => clearInterval(timer))
 
-const WINDOW_PAST_H  = 24          // hours before now shown
-const WINDOW_FUTURE_D = 30         // days after now shown
-const WINDOW_MS = (WINDOW_PAST_H + WINDOW_FUTURE_D * 24) * 3_600_000
+const windowStart = computed(() => now.value - PAST_H * 3_600_000)
+const windowEnd   = computed(() => now.value + FUTURE_D * 24 * 3_600_000)
 
-const windowStart = computed(() => now.value - WINDOW_PAST_H * 3_600_000)
-const windowEnd   = computed(() => now.value + WINDOW_FUTURE_D * 24 * 3_600_000)
+// ── Platform display names ────────────────────────────────────────────────────
+const PLATFORM_DISPLAY: Record<string, string> = {
+  scholat:    '学者网',
+  pigai:      '批改网',
+  moodle:     'Moodle',
+  itestcloud: 'iTest',
+  welearn:    'WeLearn',
+  codeforces: 'Codeforces',
+  manual:     '手动添加',
+}
+function displayName(p: string): string { return PLATFORM_DISPLAY[p] ?? p }
 
-// ── Platforms ────────────────────────────────────────────────────────────────
+// ── Platform colors (not used for urgency) ────────────────────────────────────
 const PLATFORM_COLORS: Record<string, string> = {
-  scholat:     '#0067C0',
-  pigai:       '#107C10',
-  moodle:      '#FF8C00',
-  itestcloud:  '#8764B8',
-  welearn:     '#00B7C3',
-  codeforces:  '#C50F1F',
-  manual:      '#767676',
+  scholat:    '#0067C0',
+  pigai:      '#107C10',
+  moodle:     '#FF8C00',
+  itestcloud: '#8764B8',
+  welearn:    '#00B7C3',
+  codeforces: '#6B3FA0',
+  manual:     '#5C7A8A',
 }
-function platformColor(p: string): string {
-  return PLATFORM_COLORS[p] ?? '#767676'
+function platformColor(p: string): string { return PLATFORM_COLORS[p] ?? '#767676' }
+
+// ── Pixel position helpers ────────────────────────────────────────────────────
+function toPx(ms: number): number {
+  return ((ms - windowStart.value) / TOTAL_MS) * TOTAL_PX.value
 }
+const nowPx = computed(() => toPx(now.value))
 
-// ── Events in window, grouped by platform ────────────────────────────────────
-const visibleEvents = computed(() =>
-  store.events.filter((e) => {
-    if (!e.end_at) return false
-    const d = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
-    return d >= windowStart.value && d <= windowEnd.value
-  }).sort((a, b) => {
-    if (a.platform !== b.platform) return a.platform.localeCompare(b.platform)
-    const da = Date.parse(a.end_at! + (a.end_at!.endsWith('Z') ? '' : 'Z'))
-    const db = Date.parse(b.end_at! + (b.end_at!.endsWith('Z') ? '' : 'Z'))
-    return da - db
-  })
-)
-
-// Group into platform swimlanes
-interface Lane { platform: string; events: typeof visibleEvents.value }
-const lanes = computed<Lane[]>(() => {
-  const map = new Map<string, Lane>()
-  for (const e of visibleEvents.value) {
-    if (!map.has(e.platform)) map.set(e.platform, { platform: e.platform, events: [] })
-    map.get(e.platform)!.events.push(e)
-  }
-  return Array.from(map.values())
-})
-
-// Within a lane, assign a vertical row (0 or 1) to avoid node overlap
-// Two nodes conflict if they are within 14% of each other horizontally
-function rowAssignments(events: typeof visibleEvents.value): number[] {
-  const rows: number[] = []
-  const pcts = events.map(e => eventPct(e))
-  for (let i = 0; i < events.length; i++) {
-    // try row 0, then 1, then 2
-    let assigned = 0
-    for (let row = 0; row <= 2; row++) {
-      const conflict = rows.slice(0, i).some(
-        (r, j) => r === row && Math.abs(pcts[j] - pcts[i]) < 14
-      )
-      if (!conflict) { assigned = row; break }
-    }
-    rows.push(assigned)
-  }
-  return rows
-}
-
-// ── Position helpers (0–100%) ─────────────────────────────────────────────────
-function toPercent(ms: number): number {
-  return ((ms - windowStart.value) / WINDOW_MS) * 100
-}
-const nowPercent = computed(() => toPercent(now.value))
-
-function eventPct(e: ScheduleEvent): number {
+function eventPx(e: ScheduleEvent): number {
   if (!e.end_at) return 0
-  const ms = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
-  return toPercent(ms)
+  return toPx(Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z')))
 }
 
-// ── Urgency ──────────────────────────────────────────────────────────────────
+// ── Urgency ───────────────────────────────────────────────────────────────────
 function urgency(e: ScheduleEvent): 'urgent' | 'warn' | 'done' | 'normal' {
   if (e.status === 'submitted') return 'done'
   if (!e.end_at) return 'normal'
-  const d = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
-  const diff = d - now.value
+  const diff = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z')) - now.value
   if (diff <= 0) return 'done'
   if (diff <= 48 * 3_600_000) return 'urgent'
   if (diff <= 7 * 24 * 3_600_000) return 'warn'
   return 'normal'
 }
 
-// ── Countdown ─────────────────────────────────────────────────────────────────
+// ── Countdown ────────────────────────────────────────────────────────────────
 function countdown(e: ScheduleEvent): string {
   if (!e.end_at) return '—'
-  const d = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
-  const diff = d - now.value
+  const diff = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z')) - now.value
   if (diff <= 0) {
-    const over = -diff
-    if (over < 3_600_000) return `已过 ${Math.floor(over / 60_000)} 分`
-    if (over < 86_400_000) return `已过 ${Math.floor(over / 3_600_000)} 时`
-    return `已过 ${Math.floor(over / 86_400_000)} 天`
+    const o = -diff
+    if (o < 3_600_000) return `已过 ${Math.floor(o / 60_000)} 分`
+    if (o < 86_400_000) return `已过 ${Math.floor(o / 3_600_000)} 小时`
+    return `已过 ${Math.floor(o / 86_400_000)} 天`
   }
   if (diff < 3_600_000) return `还剩 ${Math.floor(diff / 60_000)} 分钟`
   if (diff < 86_400_000) return `还剩 ${Math.floor(diff / 3_600_000)} 小时`
@@ -121,40 +84,68 @@ function countdown(e: ScheduleEvent): string {
   return h > 0 ? `还剩 ${d2} 天 ${h} 小时` : `还剩 ${d2} 天`
 }
 
-// ── Axis ticks ────────────────────────────────────────────────────────────────
-interface Tick { label: string; pct: number; major: boolean }
+// ── Axis ticks (pixel-based) ──────────────────────────────────────────────────
+interface Tick { label: string; px: number; major: boolean }
 const ticks = computed<Tick[]>(() => {
   const result: Tick[] = []
-  const start = new Date(windowStart.value)
-  // Align to next midnight after window start
-  const d = new Date(start)
+  const d = new Date(windowStart.value)
   d.setUTCHours(0, 0, 0, 0)
   d.setUTCDate(d.getUTCDate() + 1)
-
   while (d.getTime() <= windowEnd.value) {
-    const ts = d.getTime()
-    result.push({
-      label: d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
-      pct: toPercent(ts),
-      major: true,
-    })
-    // 12-hour minor tick
-    const noon = new Date(d)
-    noon.setUTCHours(12)
-    if (noon.getTime() < windowEnd.value) {
-      result.push({ label: '12:00', pct: toPercent(noon.getTime()), major: false })
-    }
+    result.push({ label: d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' }), px: toPx(d.getTime()), major: true })
+    const noon = new Date(d); noon.setUTCHours(12)
+    if (noon.getTime() <= windowEnd.value)
+      result.push({ label: '12:00', px: toPx(noon.getTime()), major: false })
     d.setUTCDate(d.getUTCDate() + 1)
   }
   return result
 })
 
-// ── Detail popup ──────────────────────────────────────────────────────────────
-const selected = ref<ScheduleEvent | null>(null)
-function select(e: ScheduleEvent) {
-  selected.value = selected.value?.id === e.id ? null : e
+// ── Grouped lanes ─────────────────────────────────────────────────────────────
+const visibleEvents = computed(() =>
+  store.events.filter(e => {
+    if (!e.end_at) return false
+    const ms = Date.parse(e.end_at + (e.end_at.endsWith('Z') ? '' : 'Z'))
+    return ms >= windowStart.value && ms <= windowEnd.value
+  })
+)
+
+interface Lane { platform: string; events: ScheduleEvent[] }
+const lanes = computed<Lane[]>(() => {
+  const map = new Map<string, ScheduleEvent[]>()
+  for (const e of visibleEvents.value) {
+    if (!map.has(e.platform)) map.set(e.platform, [])
+    map.get(e.platform)!.push(e)
+  }
+  for (const arr of map.values())
+    arr.sort((a, b) => Date.parse((a.end_at ?? '') + 'Z') - Date.parse((b.end_at ?? '') + 'Z'))
+  return Array.from(map.entries()).map(([platform, events]) => ({ platform, events }))
+})
+
+// Assign sub-rows within a lane to avoid overlap (conflict = nodes closer than 130px)
+function rowAssignments(events: ScheduleEvent[]): number[] {
+  const rows: number[] = []
+  const pxs = events.map(e => eventPx(e))
+  for (let i = 0; i < events.length; i++) {
+    let assigned = 0
+    for (let row = 0; row <= 3; row++) {
+      const conflict = rows.slice(0, i).some((r, j) => r === row && Math.abs(pxs[j] - pxs[i]) < 130)
+      if (!conflict) { assigned = row; break }
+    }
+    rows.push(assigned)
+  }
+  return rows
 }
 
+// Lane height based on max row used
+function laneHeight(events: ScheduleEvent[]): number {
+  const rows = rowAssignments(events)
+  return 52 + Math.max(...rows) * 48
+}
+
+// ── Detail panel ──────────────────────────────────────────────────────────────
+const selected = ref<ScheduleEvent | null>(null)
+function select(e: ScheduleEvent) { selected.value = selected.value?.id === e.id ? null : e }
 function fmtFull(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
@@ -166,81 +157,82 @@ function fmtFull(iso: string | null): string {
   <div class="timeline-view">
     <div class="tl-header">
       <h2 class="tl-title">时间轴</h2>
-      <span class="tl-range">未来 {{ WINDOW_FUTURE_D }} 天 · 过去 {{ WINDOW_PAST_H }} 小时</span>
+      <span class="tl-range">过去 {{ PAST_H }} 小时 · 未来 {{ FUTURE_D }} 天</span>
     </div>
 
     <!-- legend -->
     <div class="legend">
-      <span v-for="(color, name) in PLATFORM_COLORS" :key="name" class="legend-item">
-        <span class="legend-dot" :style="{ background: color }"></span>{{ name }}
+      <span v-for="(color, key) in PLATFORM_COLORS" :key="key" class="legend-item">
+        <span class="legend-dot" :style="{ background: color }"></span>{{ displayName(key) }}
       </span>
+      <span class="legend-item"><span class="legend-badge urgent-dot"></span>48h 内截止</span>
+      <span class="legend-item"><span class="legend-badge warn-dot"></span>7天内截止</span>
     </div>
 
-    <div class="tl-wrap">
-      <!-- axis: label cell + track cell share the grid -->
-      <div class="axis-row">
-        <div class="row-label"></div>
-        <div class="track-cell">
-          <div class="axis-track">
-            <div
-              v-for="(t, i) in ticks"
-              :key="i"
-              class="tick"
-              :class="{ major: t.major }"
-              :style="{ left: t.pct + '%' }"
-            >
-              <span class="tick-label" v-if="t.major">{{ t.label }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+    <!-- scrollable timeline -->
+    <div class="tl-scroll-wrap">
+      <div class="tl-wrap" :style="{ width: (LABEL_W + TOTAL_PX) + 'px' }">
 
-      <!-- lanes + shared now-line overlay -->
-      <div class="lanes">
-        <div class="now-overlay-row">
-          <div class="row-label"></div>
-          <div class="track-cell now-track-cell">
-            <div class="now-line" :style="{ left: nowPercent + '%' }">
-              <span class="now-label">现在</span>
+        <!-- axis row -->
+        <div class="axis-row">
+          <div class="label-cell"></div>
+          <div class="track-cell" :style="{ width: TOTAL_PX + 'px' }">
+            <div class="axis-track">
+              <div v-for="(t, i) in ticks" :key="i"
+                class="tick" :class="{ major: t.major }"
+                :style="{ left: t.px + 'px' }">
+                <span v-if="t.major" class="tick-label">{{ t.label }}</span>
+              </div>
+              <div class="now-marker" :style="{ left: nowPx + 'px' }">
+                <span class="now-label">现在</span>
+              </div>
             </div>
           </div>
         </div>
 
-        <div v-for="lane in lanes" :key="lane.platform" class="lane-row">
-          <div class="row-label" :style="{ color: platformColor(lane.platform) }">{{ lane.platform }}</div>
-          <div class="track-cell">
-            <div class="lane-track" :style="{ height: (40 + Math.max(...rowAssignments(lane.events)) * 44) + 'px' }">
-              <template v-for="(e, idx) in lane.events" :key="e.id">
-                <div
-                  class="bar-fill"
-                  :class="`fill-${urgency(e)}`"
+        <!-- swimlanes -->
+        <div class="lanes">
+          <!-- now-line overlay -->
+          <div class="now-overlay" :style="{ left: (LABEL_W + nowPx) + 'px' }"></div>
+
+          <div v-for="lane in lanes" :key="lane.platform" class="lane-row"
+            :style="{ height: laneHeight(lane.events) + 'px' }">
+            <div class="label-cell" :style="{ color: platformColor(lane.platform) }">
+              {{ displayName(lane.platform) }}
+            </div>
+            <div class="track-cell" :style="{ width: TOTAL_PX + 'px', position: 'relative' }">
+              <!-- bar fills -->
+              <template v-for="(e, idx) in lane.events" :key="'bar-' + e.id">
+                <div class="bar-fill"
                   :style="{
-                    left: Math.max(0, Math.min(100, nowPercent)) + '%',
-                    width: Math.max(0, Math.min(100, eventPct(e) - nowPercent)) + '%',
-                    top: (6 + rowAssignments(lane.events)[idx] * 44) + 'px',
-                  }"
-                ></div>
-                <button
-                  class="event-node"
-                  :class="`node-${urgency(e)}`"
+                    background: platformColor(e.platform),
+                    left: Math.max(0, nowPx) + 'px',
+                    width: Math.max(0, eventPx(e) - Math.max(0, nowPx)) + 'px',
+                    top: (8 + rowAssignments(lane.events)[idx] * 48) + 'px',
+                  }">
+                </div>
+              </template>
+              <!-- event nodes -->
+              <template v-for="(e, idx) in lane.events" :key="'node-' + e.id">
+                <button class="event-node"
                   :style="{
-                    left: eventPct(e) + '%',
-                    top: (22 + rowAssignments(lane.events)[idx] * 44) + 'px',
+                    left: eventPx(e) + 'px',
+                    top: (24 + rowAssignments(lane.events)[idx] * 48) + 'px',
                     borderColor: platformColor(e.platform),
+                    opacity: urgency(e) === 'done' ? 0.45 : 1,
                   }"
-                  @click="select(e)"
-                  :title="e.title"
-                >
+                  @click="select(e)">
+                  <!-- urgency dot badge -->
+                  <span v-if="urgency(e) === 'urgent'" class="badge-dot urgent-badge"></span>
+                  <span v-else-if="urgency(e) === 'warn'" class="badge-dot warn-badge"></span>
                   <span class="node-title">{{ e.title }}</span>
                   <span class="node-cd">{{ countdown(e) }}</span>
                 </button>
               </template>
             </div>
           </div>
-        </div>
 
-        <div v-if="!lanes.length && !store.loading" class="empty">
-          窗口内无事项
+          <div v-if="!lanes.length && !store.loading" class="empty">窗口内无事项</div>
         </div>
       </div>
     </div>
@@ -249,81 +241,83 @@ function fmtFull(iso: string | null): string {
     <transition name="slide">
       <div v-if="selected" class="detail-panel">
         <div class="detail-header">
-          <span class="detail-platform" :style="{ color: platformColor(selected.platform) }">{{ selected.platform }}</span>
+          <span class="detail-platform" :style="{ color: platformColor(selected.platform) }">
+            {{ displayName(selected.platform) }}
+          </span>
           <button class="detail-close" @click="selected = null">✕</button>
         </div>
         <div class="detail-title">{{ selected.title }}</div>
         <div class="detail-row"><span class="detail-k">截止</span><span class="detail-v">{{ fmtFull(selected.end_at) }} (CST)</span></div>
-        <div class="detail-row"><span class="detail-k">倒计时</span><span class="detail-v cd" :class="`cd-${urgency(selected)}`">{{ countdown(selected) }}</span></div>
+        <div class="detail-row"><span class="detail-k">倒计时</span><span class="detail-v" :class="`cd-${urgency(selected)}`">{{ countdown(selected) }}</span></div>
         <div class="detail-row"><span class="detail-k">状态</span><span class="detail-v">{{ selected.status }}</span></div>
-        <div class="detail-row"><span class="detail-k">提交</span><span class="detail-v">{{ selected.submission_policy }}</span></div>
-        <div v-if="selected.description" class="detail-desc">{{ selected.description.slice(0, 200) }}{{ selected.description.length > 200 ? '…' : '' }}</div>
-        <div class="detail-row" v-if="selected.raw_payload?.proposed_by || selected.raw_payload?.publisher">
+        <div class="detail-row"><span class="detail-k">提交规则</span><span class="detail-v">{{ selected.submission_policy }}</span></div>
+        <div v-if="selected.raw_payload?.proposed_by || selected.raw_payload?.publisher" class="detail-row">
           <span class="detail-k">来源</span>
-          <span class="detail-v">{{ selected.raw_payload?.proposed_by ?? selected.raw_payload?.publisher ?? '—' }}</span>
+          <span class="detail-v">{{ selected.raw_payload?.proposed_by ?? selected.raw_payload?.publisher }}</span>
         </div>
+        <div v-if="selected.description" class="detail-desc">{{ selected.description.slice(0, 300) }}{{ selected.description.length > 300 ? '…' : '' }}</div>
       </div>
     </transition>
   </div>
 </template>
 
 <style scoped>
-.timeline-view {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 24px 20px 60px;
-}
+.timeline-view { max-width: 100%; margin: 0 auto; padding: 24px 20px 60px; }
 
 .tl-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
 .tl-title  { font-size: 18px; font-weight: 600; letter-spacing: -.3px; }
 .tl-range  { font-size: 12px; color: var(--muted); }
 
-/* legend */
-.legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
 .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); font-family: var(--mono); }
-.legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.legend-dot  { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.legend-badge { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.urgent-dot { background: #C50F1F; }
+.warn-dot   { background: #F59E0B; }
 
-/* ── Outer wrapper ── */
-.tl-wrap {
-  background: var(--surface);
-  backdrop-filter: blur(20px) saturate(1.3);
-  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+/* ── Scroll container ── */
+.tl-scroll-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow-sm);
-  overflow-x: auto;
-  padding-bottom: 8px;
+  background: var(--surface);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
 }
 
-/* ── Shared two-column grid: label + track ──
-   All rows (axis + lanes) use this so percentages are in the same column. */
+/* Inner fixed-width container */
+.tl-wrap { display: flex; flex-direction: column; min-width: 100%; }
+
+/* ── Two-column row layout ── */
 .axis-row,
 .lane-row {
-  display: grid;
-  grid-template-columns: 108px 1fr;
+  display: flex;
+  align-items: stretch;
 }
 
-/* label cell */
-.row-label {
-  padding: 0 8px 0 12px;
+.label-cell {
+  width: 120px;
+  flex-shrink: 0;
+  padding: 0 8px 0 14px;
   display: flex;
   align-items: center;
   font-family: var(--mono);
   font-size: 11px;
+  font-weight: 500;
   color: var(--muted);
-  flex-shrink: 0;
 }
 
-/* track cell — all percentage positioning is inside this */
 .track-cell {
   position: relative;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 /* ── Axis ── */
 .axis-track {
   position: relative;
-  height: 28px;
+  height: 36px;
   border-bottom: 1px solid var(--border-strong);
 }
 
@@ -331,154 +325,114 @@ function fmtFull(iso: string | null): string {
   position: absolute;
   top: 0; bottom: 0;
   width: 1px;
-  background: var(--border);
+  background: rgba(0,0,0,.08);
 }
 .tick.major {
   width: 2px;
-  background: var(--border-strong);
+  background: rgba(0,0,0,.18);
 }
 .tick-label {
   position: absolute;
-  top: 6px; left: 4px;
-  font-size: 10px;
+  top: 8px; left: 5px;
+  font-size: 11px;
   font-family: var(--mono);
-  color: var(--muted);
+  color: var(--text);
   white-space: nowrap;
+  font-weight: 500;
 }
-
-/* ── Lanes area + now-line overlay ── */
-.lanes {
-  position: relative;
-}
-
-/* now-line overlay row — shares the same two-column grid so the line
-   sits inside the track column and nowPercent resolves against track width */
-.now-overlay-row {
-  display: grid;
-  grid-template-columns: 108px 1fr;
+.now-marker {
   position: absolute;
-  top: 0; bottom: 0;
-  left: 0; right: 0;
-  pointer-events: none;
-  z-index: 20;
-}
-.now-track-cell {
-  position: relative;
-}
-
-.now-line {
-  position: absolute;
-  top: 0; bottom: 0;
-  border-left: 2px solid var(--accent);
-  pointer-events: none;
+  top: 0; bottom: -4px;
+  width: 2px; background: var(--accent);
+  z-index: 10;
   animation: nowPulse 2s ease-in-out infinite;
 }
 .now-label {
   position: absolute;
-  top: 4px; left: 4px;
-  font-size: 10px; font-weight: 600;
+  top: 7px; left: 5px;
+  font-size: 11px; font-weight: 600;
   color: var(--accent);
-  white-space: nowrap;
-  font-family: var(--mono);
+  white-space: nowrap; font-family: var(--mono);
 }
-@keyframes nowPulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: .5; }
+@keyframes nowPulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+/* ── Lanes ── */
+.lanes { position: relative; }
+.now-overlay {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: rgba(0,103,192,.25);
+  pointer-events: none;
+  z-index: 5;
 }
 
-/* Lane rows */
-.lane-row {
-  border-bottom: 1px solid var(--border);
-}
+.lane-row { border-bottom: 1px solid var(--border); }
 .lane-row:last-child { border-bottom: none; }
-.lane-row .row-label {
-  min-height: 52px;
-  font-weight: 500;
-  font-size: 11px;
-}
 
-.lane-track {
-  position: relative;
-  min-height: 52px;
-}
-
-/* bar fill */
+/* bar */
 .bar-fill {
   position: absolute;
   height: 3px;
-  opacity: .4;
+  opacity: .3;
   border-radius: 2px;
   pointer-events: none;
-  transform: translateY(-50%);
+  transform: translateY(0);
 }
-.fill-urgent { background: var(--urgent); }
-.fill-warn   { background: #F59E0B; }
-.fill-normal { background: var(--accent); }
-.fill-done   { background: var(--done); }
 
-/* event node — top is set inline per-row */
+/* node */
 .event-node {
   position: absolute;
   transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center;
   background: var(--surface-solid);
-  border: 2px solid var(--accent);
+  border: 2px solid #999;
   border-radius: 6px;
-  padding: 3px 7px;
+  padding: 3px 8px 3px 8px;
   box-shadow: var(--shadow-sm);
   cursor: pointer;
   z-index: 10;
-  min-width: 88px; max-width: 160px;
+  min-width: 90px; max-width: 180px;
   white-space: nowrap;
   transition: box-shadow .12s, transform .12s;
 }
-.event-node:hover {
-  box-shadow: var(--shadow-md);
-  transform: translateX(-50%) translateY(-4px);
+.event-node:hover { box-shadow: var(--shadow-md); transform: translateX(-50%) translateY(-3px); }
+
+/* urgency badge dot */
+.badge-dot {
+  position: absolute;
+  top: -4px; right: -4px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
 }
-.node-title {
-  font-size: 10px; font-weight: 500; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; max-width: 144px;
-}
-.node-cd {
-  font-size: 9px; font-family: var(--mono); color: var(--muted); margin-top: 1px;
-}
-.node-urgent .node-cd { color: var(--urgent); }
-.node-warn   .node-cd { color: var(--warn); }
-.node-urgent { border-color: var(--urgent) !important; }
-.node-warn   { border-color: #F59E0B !important; }
-.node-done   { opacity: .45; }
+.urgent-badge { background: #C50F1F; }
+.warn-badge   { background: #F59E0B; }
+
+.node-title { font-size: 10px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; max-width: 164px; }
+.node-cd    { font-size: 9px; font-family: var(--mono); color: var(--muted); margin-top: 1px; }
 
 .empty { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
 
 /* ── Detail panel ── */
 .detail-panel {
-  margin-top: 16px;
-  background: var(--surface-solid);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-md);
-  padding: 16px 20px;
+  margin-top: 16px; background: var(--surface-solid);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow-md); padding: 16px 20px;
+  max-width: 560px;
 }
 .detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .detail-platform { font-family: var(--mono); font-size: 11px; font-weight: 600; }
 .detail-close { border: none; background: none; color: var(--muted); font-size: 14px; cursor: pointer; }
 .detail-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; line-height: 1.35; }
 .detail-row { display: flex; gap: 12px; font-size: 12px; margin-bottom: 6px; }
-.detail-k { width: 52px; color: var(--muted); flex-shrink: 0; }
+.detail-k { width: 60px; color: var(--muted); flex-shrink: 0; }
 .detail-v { font-family: var(--mono); }
-.cd.cd-urgent { color: var(--urgent); font-weight: 600; }
-.cd.cd-warn   { color: var(--warn); }
-.detail-desc {
-  margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.6;
-  border-top: 1px solid var(--border); padding-top: 10px;
-}
+.cd-urgent { color: #C50F1F; font-weight: 600; }
+.cd-warn   { color: #835B00; }
+.detail-desc { margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.6; border-top: 1px solid var(--border); padding-top: 10px; }
 
-/* slide transition */
 .slide-enter-active, .slide-leave-active { transition: opacity .2s, transform .2s; }
 .slide-enter-from, .slide-leave-to       { opacity: 0; transform: translateY(-8px); }
-
-@media (prefers-reduced-motion: reduce) {
-  .now-line { animation: none; }
-}
+@media (prefers-reduced-motion: reduce) { .now-marker { animation: none; } }
 </style>

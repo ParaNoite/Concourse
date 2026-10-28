@@ -11,9 +11,14 @@ onUnmounted(() => { store.stopPoll(); store.stopTick() })
 
 const PLATFORM_COLORS: Record<string, string> = {
   scholat: '#0067C0', pigai: '#107C10', moodle: '#FF8C00',
-  itestcloud: '#8764B8', welearn: '#00B7C3', codeforces: '#C50F1F', manual: '#767676',
+  itestcloud: '#8764B8', welearn: '#00B7C3', codeforces: '#6B3FA0', manual: '#5C7A8A',
+}
+const PLATFORM_DISPLAY: Record<string, string> = {
+  scholat: '学者网', pigai: '批改网', moodle: 'Moodle',
+  itestcloud: 'iTest', welearn: 'WeLearn', codeforces: 'Codeforces', manual: '手动添加',
 }
 function platformColor(p: string): string { return PLATFORM_COLORS[p] ?? '#767676' }
+function displayName(p: string): string { return PLATFORM_DISPLAY[p] ?? p }
 
 // Group filtered events by platform, sorted by earliest deadline within each group
 const platformGroups = computed(() => {
@@ -75,7 +80,7 @@ async function addEvent() {
         class="ptab"
         :class="{ active: store.activePlatform === p }"
         @click="store.activePlatform = p"
-      >{{ p === 'all' ? '全部' : p }}</button>
+      >{{ p === 'all' ? '全部' : displayName(p) }}</button>
     </div>
 
     <!-- stat tiles -->
@@ -108,7 +113,7 @@ async function addEvent() {
     <!-- per-platform cards -->
     <div v-for="group in platformGroups" :key="group.platform" class="card">
       <div class="card-header">
-        <span class="card-title" :style="{ color: platformColor(group.platform) }">{{ group.platform }}</span>
+        <span class="card-title" :style="{ color: platformColor(group.platform) }">{{ displayName(group.platform) }}</span>
         <span class="card-count">{{ group.events.length }}</span>
       </div>
       <EventRow
