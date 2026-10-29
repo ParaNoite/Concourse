@@ -65,6 +65,17 @@ def _parse_time_range(raw: str) -> tuple[datetime | None, datetime | None]:
     return _parse_local_datetime(parts[0]), _parse_local_datetime(parts[1], end_of_day=True)
 
 
+def _map_completion_status(completion_raw: str) -> str:
+    completion = (completion_raw or "").strip().lower()
+    if any(marker in completion for marker in ("未达标", "未完成", "not achieved", "not completed", "failed")):
+        return "open"
+    if any(marker in completion for marker in ("已达标", "已完成")) or re.search(
+        r"\b(achieved|completed|passed)\b", completion
+    ):
+        return "submitted"
+    return "open"
+
+
 def parse_training_list(html: str, category: str) -> list[ScheduleEventCreate]:
     """Parse one current-training category page without browser dependencies."""
     if category not in TRAINING_PAGES:
@@ -94,6 +105,7 @@ def parse_training_list(html: str, category: str) -> list[ScheduleEventCreate]:
         score_label = card.select_one(".task-score-dabiao")
         score_raw = _text(score_label)
         completion_raw = _text(score_label.find_next_sibling("dd")) if score_label else ""
+        status = _map_completion_status(completion_raw)
         raw_parts = re.split(r"\s*(?:@|[~～])\s*", range_raw, maxsplit=1)
         description = "\n".join(
             f"{item['label']}: {item['value']}" if item["label"] else item["value"]
@@ -111,7 +123,7 @@ def parse_training_list(html: str, category: str) -> list[ScheduleEventCreate]:
                 start_at=start_at,
                 end_at=end_at,
                 tz_original="Asia/Shanghai",
-                status="open",
+                status=status,
                 raw_payload={
                     "task_id": task_id,
                     "category": category,

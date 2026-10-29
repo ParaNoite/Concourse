@@ -33,7 +33,7 @@ def test_parse_current_training_card(category: str):
     assert event.platform == "itestcloud"
     assert event.source_id == f"{category}:12345"
     assert event.title == "Listening Practice"
-    assert event.status == "open"
+    assert event.status == "submitted"
     assert event.start_at == datetime(2026, 10, 13, 6, 0, tzinfo=UTC)
     assert event.end_at == datetime(2026, 11, 1, 15, 59, tzinfo=UTC)
     assert event.raw_payload["score_raw"] == "87.9"
@@ -42,6 +42,20 @@ def test_parse_current_training_card(category: str):
 
 def test_parse_empty_list():
     assert parse_training_list('<div class="nodataBox">No data</div>', "class") == []
+
+
+def test_score_without_achievement_marker_remains_open():
+    html = _CARD.replace("Achieved", "Not achieved")
+    (event,) = parse_training_list(html, "class")
+
+    assert event.status == "open"
+
+
+def test_chinese_achievement_marker_maps_to_submitted():
+    html = _CARD.replace("Achieved", "已达标")
+    (event,) = parse_training_list(html, "class")
+
+    assert event.status == "submitted"
 
 
 def test_skip_cards_without_stable_id_or_title():
